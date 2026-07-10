@@ -1,0 +1,12 @@
+node_modules/
+dist/
+target/
+.vite/
+*.log
+.env
+.env.*
+!.env.example
+
+# Local Codex/Claude fixtures and private probe output
+fixtures/private/
+probe-output*.json

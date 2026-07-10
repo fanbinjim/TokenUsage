@@ -1,0 +1,24 @@
+:root {
+  color: #eef3ff;
+  background: #0b1020;
+  font-family: Inter, "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+body { min-width: 720px; min-height: 600px; margin: 0; background: radial-gradient(circle at top right, #263a76 0, transparent 38%), #0b1020; }
+button { border: 0; border-radius: 9px; background: #5375d8; color: white; cursor: pointer; font: inherit; padding: 8px 12px; }
+button:disabled { cursor: wait; opacity: .62; }
+button.ghost { background: rgba(255,255,255,.08); }
+.app-shell { min-height: 100vh; }
+.topbar { display: flex; align-items: center; justify-content: space-between; padding: 18px 28px; border-bottom: 1px solid rgba(255,255,255,.1); background: rgba(12,18,38,.72); backdrop-filter: blur(20px); }
+.brand { display: flex; align-items: center; gap: 9px; font-size: 18px; font-weight: 750; letter-spacing: .01em; }
+.brand span { color: #aebcff; font-size: 24px; }.actions { display: flex; gap: 8px; }
+.dashboard { max-width: 1120px; margin: 0 auto; padding: 42px 28px 56px; }
+.hero { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }.hero h1 { margin: 4px 0; font-size: clamp(32px, 5vw, 48px); }.eyebrow { margin: 0; color: #aab9ef; font-size: 12px; font-weight: 700; letter-spacing: .12em; }.subtle, small { color: #9ba8c9; }.status { padding: 6px 10px; border-radius: 999px; background: rgba(126,146,204,.18); color: #c3d1ff; font-size: 12px; }.status-available { background: rgba(78, 195, 153, .18); color: #8af0c6; }.status-localOnly { background: rgba(255,194,92,.17); color: #ffd889; }
+.quota-grid, .stats-grid { display: grid; gap: 14px; }.quota-grid { grid-template-columns: repeat(2, 1fr); }.stats-grid { grid-template-columns: repeat(4, 1fr); margin: 14px 0; }
+.quota-card, .stat-card, .panel { border: 1px solid rgba(188,203,255,.15); border-radius: 16px; background: linear-gradient(140deg, rgba(35,49,91,.78), rgba(17,24,47,.78)); box-shadow: 0 16px 40px rgba(0,0,0,.16); }.quota-card, .stat-card { padding: 20px; }.quota-card p, .stat-card p { margin: 0 0 10px; color: #b8c3df; }.quota-card strong { font-size: 42px; }.stat-card strong { font-size: 26px; }
+.meter { height: 8px; overflow: hidden; border-radius: 99px; margin: 18px 0 10px; background: rgba(255,255,255,.12); }.meter span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #74b1ff, #b195ff); transition: width .35s ease; }
+.panel { margin-top: 14px; padding: 20px; }.panel-heading { display: flex; justify-content: space-between; align-items: center; }.panel h2 { margin: 0; font-size: 18px; }.thread-list, .diagnostics ul { list-style: none; padding: 0; margin: 14px 0 0; }.thread-list li { display: flex; justify-content: space-between; gap: 20px; padding: 12px 0; border-top: 1px solid rgba(255,255,255,.09); }.thread-list li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.thread-list li strong { color: #c8d4ff; }.diagnostics li { padding: 8px 0; }.diagnostics li.warning { color: #ffd889; }.diagnostics li.error { color: #ffacba; }.empty, .loading, .fatal { color: #aeb9d4; }.loading, .fatal { padding: 72px 28px; text-align: center; }.fatal { color: #ffbdc5; }
+.settings-drawer { position: fixed; z-index: 20; top: 76px; right: 18px; width: min(370px, calc(100vw - 36px)); padding: 18px; border: 1px solid rgba(188,203,255,.2); border-radius: 16px; background: rgba(20,29,57,.97); box-shadow: 0 24px 64px rgba(0,0,0,.42); backdrop-filter: blur(22px); }.settings-drawer label { display: grid; gap: 8px; margin-top: 18px; color: #c9d4ee; font-size: 14px; }.settings-drawer input, .settings-drawer select { width: 100%; padding: 9px 10px; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: rgba(255,255,255,.08); color: #f2f5ff; font: inherit; }.settings-drawer option { color: #10162b; }.settings-drawer .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }.settings-drawer .toggle-row input { width: 18px; height: 18px; }.settings-note { margin: 16px 0 0; color: #9ba8c9; font-size: 12px; line-height: 1.55; }
+@media (max-width: 780px) { body { min-width: 0; }.stats-grid { grid-template-columns: repeat(2, 1fr); }.dashboard { padding: 28px 16px; }.topbar { padding: 14px 16px; }.quota-grid { grid-template-columns: 1fr; } }

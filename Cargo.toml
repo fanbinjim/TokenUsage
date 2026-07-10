@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/tokenusage-core", "src-tauri"]
+resolver = "2"
