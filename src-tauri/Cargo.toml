@@ -6,6 +6,7 @@ authors = ["TokenUsage contributors"]
 edition = "2024"
 license = "MIT"
 rust-version = "1.85.0"
+default-run = "tokenusage"
 
 [lib]
 name = "tokenusage_lib"

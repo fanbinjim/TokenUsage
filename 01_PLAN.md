@@ -1,5 +1,53 @@
 # TokenUsage：Windows 移植与 Linux 预留方案
 
+## 0. 当前进度（2026-07-11）
+
+### 已完成
+
+**阶段 1：基础与协议验证** ✅
+- Tauri 2 + React + TypeScript + Rust workspace 搭建
+- Rust `tokenusage-core` crate：领域模型、路径抽象、probe CLI
+- Codex app-server 额度读取（initialize → account/read → rateLimits/read → usage/read）
+- 本地 SQLite（`state_5.sqlite`）总量读取，schema 兼容检测
+- session JSONL 流式解析，Token 增量计算
+- 诊断系统（脱敏输出）
+- Windows 构建 + Vite 开发环境
+
+**阶段 2：Windows Alpha — Codex 核心版** ✅
+- 无边框透明窗口（`decorations: false` + `transparent: true`），Rust 端强制覆盖窗口状态插件缓存
+- 自定义标题栏（拖拽区域 + 图标化按钮：品牌 / Runtime 选择器 / 主题 / 语言 / 置顶 / 刷新 / 设置 / 关闭）
+- 深紫渐变玻璃背景 + 四级 Surface token（Window / Section / Card / Control）
+- 双环额度指示器（5h/7d，渐变 + 发光，剩余标签 + 重置时间）
+- 三张 Token 卡片（今日 / 近 7 日 / 累计，拆分条 + 图例）
+- 羊毛进度条（Sparkle 图标、渐变进度、里程碑标记）
+- 4 列任务看板（进行中 / 待处理 / 定时 / 完成，含线程 ID、优先级徽章、相对时间）
+- 用量趋势面板（热力图 + 折线图）
+- 项目排行面板（柱状图 + 列表）
+- Skill 面板（气泡图）
+- 底部状态栏：刷新时间 + Alt+U 快捷键 + 诊断状态
+- 原生托盘菜单
+- 隐藏系统滚动条
+
+**阶段 3：Windows Beta — 进行中**
+
+### 待实现
+
+| 优先级 | 功能 | 说明 | 阶段 |
+|--------|------|------|------|
+| P1 | 诊断展示优化 | 统一中英文诊断、局部降级说明 | Beta |
+| P1 | 设置窗口 | 独立设置面板（语言/主题/Runtime/路径覆盖等） | Beta |
+| P1 | 托盘快捷浮窗 | 左键打开无边框快捷浮窗，失焦/Esc 关闭 | Beta |
+| P1 | 动态双环托盘图标 | 表达 5h/7d 额度 | Beta |
+| P1 | 缓存机制 | 按文件指纹失效，原子替换写入 | Beta |
+| P1 | 定价估算 | 内置定价表，未知模型不计金额 | Beta |
+| P2 | Claude Code provider | transcript / tasks / Skill / stats fallback / statusLine 快照 | Beta |
+| P2 | 更新检查 | GitHub Release 检查，Stable/Beta 频道 | 发布 |
+| P2 | 安装器与打包 | NSIS per-user + 便携 ZIP + SHA-256 | 发布 |
+| P2 | 动效与细节 | 状态转场、进度动画、Mica 回退、可访问性 | 发布 |
+| P3 | Linux 适配 | XDG 路径、PATH 探测、托盘/热键、.deb/AppImage | 后续 |
+
+---
+
 ## 1. 总体方案
 
 - 在 `TokenUsage/` 中新建独立项目，不修改 `ref/codexU`；产品名统一为 `TokenUsage`，应用标识使用 `com.tokenusage.desktop`。

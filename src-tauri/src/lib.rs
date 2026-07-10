@@ -78,6 +78,10 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_decorations(false);
+                let _ = window.set_background_color(None);
+            }
             let open = MenuItem::with_id(app, "open", "Open TokenUsage", true, None::<&str>)?;
             let refresh = MenuItem::with_id(app, "refresh", "Refresh", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
