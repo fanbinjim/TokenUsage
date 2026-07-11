@@ -49,6 +49,27 @@ export interface DailyTokenBucket {
   tokens: number;
 }
 
+export interface UsageTrend {
+  days: DailyTokenBucket[];
+  sevenDayTokens: number;
+  previousSevenDayTokens: number;
+  changePercent: number | null;
+  isNewActivity: boolean;
+}
+
+export interface ProjectUsage {
+  name: string;
+  tokens: number;
+  threadCount: number;
+  lastActiveAt: string | null;
+}
+
+export interface NamedUsage {
+  name: string;
+  calls: number;
+  estimatedTokens: number | null;
+}
+
 export interface LocalThread {
   id: string;
   title: string;
@@ -68,6 +89,10 @@ export interface LocalUsage {
   dailyBuckets: DailyTokenBucket[];
   recentThreads: LocalThread[];
   detailedUsage: DetailedUsage | null;
+  usageTrend: UsageTrend | null;
+  projects: ProjectUsage[];
+  skillUsage: NamedUsage[];
+  toolUsage: NamedUsage[];
 }
 
 export interface UsageSnapshot {

@@ -1,8 +1,18 @@
-use crate::{app_server, AppSettings, DailyTokenBucket, DataPaths, DetailedUsage, DiagnosticItem, LocalThread, LocalUsage, MultiRuntimeUsageSnapshot, RuntimeScope, RuntimeStatus, RuntimeUsageSnapshot, SNAPSHOT_SCHEMA_VERSION, TokenBreakdown, UsageSnapshot};
+use crate::{
+    app_server, AppSettings, DailyTokenBucket, DataPaths, DetailedUsage, DiagnosticItem,
+    LocalThread, LocalUsage, MultiRuntimeUsageSnapshot, NamedUsage, ProjectUsage, RuntimeScope,
+    RuntimeStatus, RuntimeUsageSnapshot, SNAPSHOT_SCHEMA_VERSION, TokenBreakdown, UsageSnapshot,
+    UsageTrend,
+};
 use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Utc};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 use std::{collections::{HashMap, HashSet}, fs::File, io::{BufRead, BufReader}, path::Path};
+
+const RECENT_THREAD_LIMIT: usize = 40;
+const TREND_DAY_COUNT: i64 = 182;
+const MAX_PROJECTS: usize = 24;
+const ESTIMATE_CONTEXT_MINUTES: i64 = 5;
 
 pub fn load_multi_runtime(paths: &DataPaths, settings: &AppSettings) -> MultiRuntimeUsageSnapshot {
     let mut snapshot = UsageSnapshot::empty();
@@ -41,41 +51,99 @@ fn read_local_usage(paths: &DataPaths) -> Result<(LocalUsage, Vec<DiagnosticItem
         .map_err(|_| DiagnosticItem::warning("codex_database_unavailable", "Codex local state database could not be opened read-only."))?;
     connection.busy_timeout(std::time::Duration::from_secs(1)).ok();
     let columns = thread_columns(&connection).map_err(|_| DiagnosticItem::warning("codex_schema_unavailable", "Codex thread schema could not be inspected."))?;
-    if !columns.contains("tokens_used") || !columns.contains("updated_at") { return Err(DiagnosticItem::warning("codex_schema_unsupported", "Codex local state schema does not contain usage totals.")); }
+    if !columns.contains("tokens_used") || !columns.contains("updated_at") {
+        return Err(DiagnosticItem::warning("codex_schema_unsupported", "Codex local state schema does not contain usage totals."));
+    }
+
     let day_start = local_day_start();
     let seven_day_start = day_start - Duration::days(6);
+    let trend_start = day_start - Duration::days(TREND_DAY_COUNT - 1);
     let totals: (i64, i64, i64, i64, i64) = connection.query_row(
         "SELECT COALESCE(SUM(tokens_used), 0), COALESCE(SUM(CASE WHEN updated_at >= ?1 THEN tokens_used ELSE 0 END), 0), COALESCE(SUM(CASE WHEN updated_at >= ?2 THEN tokens_used ELSE 0 END), 0), COUNT(*), COALESCE(MAX(updated_at), 0) FROM threads",
         [day_start.timestamp(), seven_day_start.timestamp()],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
     ).map_err(|_| DiagnosticItem::warning("codex_totals_query_failed", "Codex local usage totals could not be queried."))?;
+
     let model = column_or_null(&columns, "model");
     let cwd = column_or_null(&columns, "cwd");
     let archived = if columns.contains("archived") { "archived" } else { "0" };
-    let mut statement = connection.prepare(&format!("SELECT id, title, tokens_used, updated_at, {model} AS model, {cwd} AS cwd, {archived} AS archived FROM threads ORDER BY updated_at DESC LIMIT 5"))
-        .map_err(|_| DiagnosticItem::warning("codex_recent_query_failed", "Recent Codex threads could not be queried."))?;
+    let mut statement = connection.prepare(&format!(
+        "SELECT id, title, tokens_used, updated_at, {model} AS model, {cwd} AS cwd, {archived} AS archived FROM threads ORDER BY updated_at DESC LIMIT {RECENT_THREAD_LIMIT}"
+    )).map_err(|_| DiagnosticItem::warning("codex_recent_query_failed", "Codex recent threads could not be queried."))?;
     let recent_threads = statement.query_map([], |row| {
         let updated_at: i64 = row.get(3)?;
+        let id = row.get::<_, Option<String>>(0)?.unwrap_or_else(|| "unknown".into());
         Ok(LocalThread {
-            id: row.get::<_, Option<String>>(0)?.unwrap_or_else(|| "unknown".into()),
-            title: row.get::<_, Option<String>>(1)?.filter(|value| !value.trim().is_empty()).unwrap_or_else(|| "Untitled".into()),
-            tokens: row.get(2)?, updated_at: timestamp(updated_at), model: row.get(4)?, cwd: row.get::<_, Option<String>>(5)?.unwrap_or_default(), archived: row.get::<_, i64>(6)? != 0,
+            title: safe_thread_title(&id),
+            id,
+            tokens: row.get(2)?, updated_at: timestamp(updated_at), model: row.get(4)?, cwd: safe_project_name(&row.get::<_, Option<String>>(5)?.unwrap_or_default()), archived: row.get::<_, i64>(6)? != 0,
         })
-    }).map_err(|_| DiagnosticItem::warning("codex_recent_query_failed", "Recent Codex threads could not be queried."))?
+    }).map_err(|_| DiagnosticItem::warning("codex_recent_query_failed", "Codex recent threads could not be queried."))?
         .filter_map(Result::ok).collect();
-    let mut daily_statement = connection.prepare("SELECT date(updated_at, 'unixepoch', 'localtime'), COALESCE(SUM(tokens_used), 0) FROM threads WHERE updated_at >= ?1 GROUP BY 1")
-        .map_err(|_| DiagnosticItem::warning("codex_daily_query_failed", "Codex daily usage could not be queried."))?;
-    let daily_map: HashMap<String, i64> = daily_statement.query_map([seven_day_start.timestamp()], |row| Ok((row.get::<_, Option<String>>(0)?.unwrap_or_default(), row.get(1)?)))
-        .map_err(|_| DiagnosticItem::warning("codex_daily_query_failed", "Codex daily usage could not be queried."))?
-        .filter_map(Result::ok).collect();
-    let daily_buckets = (0..7).map(|offset| {
-        let date = seven_day_start + Duration::days(offset);
-        let key = date.format("%Y-%m-%d").to_string();
-        DailyTokenBucket { id: key.clone(), label: date.format("%-m/%-d").to_string(), tokens: *daily_map.get(&key).unwrap_or(&0) }
-    }).collect();
+
+    let daily_map = query_daily_tokens(&connection, trend_start)?;
+    let trend_days = make_daily_buckets(trend_start, TREND_DAY_COUNT, &daily_map);
+    let daily_buckets = trend_days.iter().rev().take(7).cloned().collect::<Vec<_>>().into_iter().rev().collect();
+    let usage_trend = Some(build_usage_trend(trend_days));
+    let projects = query_projects(&connection, &columns)?;
+
     let mut diagnostics = Vec::new();
-    let detailed_usage = read_detailed_usage(&connection, &columns, day_start, seven_day_start, &mut diagnostics);
-    Ok((LocalUsage { lifetime_tokens: totals.0, today_tokens: totals.1, seven_day_tokens: totals.2, thread_count: totals.3, last_updated_at: timestamp(totals.4), daily_buckets, recent_threads, detailed_usage }, diagnostics))
+    let session_usage = read_session_usage(&connection, &columns, day_start, seven_day_start, &mut diagnostics);
+    Ok((LocalUsage {
+        lifetime_tokens: totals.0,
+        today_tokens: totals.1,
+        seven_day_tokens: totals.2,
+        thread_count: totals.3,
+        last_updated_at: timestamp(totals.4),
+        daily_buckets,
+        recent_threads,
+        detailed_usage: session_usage.detailed_usage,
+        usage_trend,
+        projects,
+        skill_usage: session_usage.skill_usage,
+        tool_usage: session_usage.tool_usage,
+    }, diagnostics))
+}
+
+fn query_daily_tokens(connection: &Connection, start: DateTime<Local>) -> Result<HashMap<String, i64>, DiagnosticItem> {
+    let mut statement = connection.prepare("SELECT date(updated_at, 'unixepoch', 'localtime'), COALESCE(SUM(tokens_used), 0) FROM threads WHERE updated_at >= ?1 GROUP BY 1")
+        .map_err(|_| DiagnosticItem::warning("codex_daily_query_failed", "Codex daily usage could not be queried."))?;
+    statement.query_map([start.timestamp()], |row| Ok((row.get::<_, Option<String>>(0)?.unwrap_or_default(), row.get(1)?)))
+        .map_err(|_| DiagnosticItem::warning("codex_daily_query_failed", "Codex daily usage could not be queried."))?
+        .filter_map(Result::ok)
+        .collect::<HashMap<_, _>>()
+        .pipe(Ok)
+}
+
+fn make_daily_buckets(start: DateTime<Local>, count: i64, daily_map: &HashMap<String, i64>) -> Vec<DailyTokenBucket> {
+    (0..count).map(|offset| {
+        let date = start + Duration::days(offset);
+        let id = date.format("%Y-%m-%d").to_string();
+        DailyTokenBucket { label: date.format("%-m/%-d").to_string(), tokens: *daily_map.get(&id).unwrap_or(&0), id }
+    }).collect()
+}
+
+fn build_usage_trend(days: Vec<DailyTokenBucket>) -> UsageTrend {
+    let seven_day_tokens = days.iter().rev().take(7).map(|day| day.tokens).sum::<i64>();
+    let previous_seven_day_tokens = days.iter().rev().skip(7).take(7).map(|day| day.tokens).sum::<i64>();
+    let change_percent = if previous_seven_day_tokens > 0 {
+        Some(((seven_day_tokens - previous_seven_day_tokens) as f64 / previous_seven_day_tokens as f64) * 100.0)
+    } else { None };
+    UsageTrend { is_new_activity: previous_seven_day_tokens == 0 && seven_day_tokens > 0, days, seven_day_tokens, previous_seven_day_tokens, change_percent }
+}
+
+fn query_projects(connection: &Connection, columns: &HashSet<String>) -> Result<Vec<ProjectUsage>, DiagnosticItem> {
+    if !columns.contains("cwd") { return Ok(Vec::new()); }
+    let mut statement = connection.prepare(&format!(
+        "SELECT COALESCE(NULLIF(cwd, ''), 'Local project'), COALESCE(SUM(tokens_used), 0), COUNT(*), COALESCE(MAX(updated_at), 0) FROM threads GROUP BY 1 ORDER BY 2 DESC LIMIT {MAX_PROJECTS}"
+    )).map_err(|_| DiagnosticItem::warning("codex_projects_query_failed", "Codex project usage could not be queried."))?;
+    statement.query_map([], |row| {
+        let updated_at: i64 = row.get(3)?;
+        Ok(ProjectUsage { name: safe_project_name(&row.get::<_, String>(0)?), tokens: row.get(1)?, thread_count: row.get(2)?, last_active_at: timestamp(updated_at) })
+    }).map_err(|_| DiagnosticItem::warning("codex_projects_query_failed", "Codex project usage could not be queried."))?
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>()
+        .pipe(Ok)
 }
 
 fn thread_columns(connection: &Connection) -> rusqlite::Result<HashSet<String>> {
@@ -86,7 +154,9 @@ fn thread_columns(connection: &Connection) -> rusqlite::Result<HashSet<String>> 
 trait Pipe: Sized { fn pipe<T>(self, function: impl FnOnce(Self) -> T) -> T { function(self) } }
 impl<T> Pipe for T {}
 
-fn column_or_null(columns: &HashSet<String>, name: &str) -> &'static str { if columns.contains(name) { match name { "model" => "model", "cwd" => "cwd", _ => "NULL" } } else { "NULL" } }
+fn column_or_null(columns: &HashSet<String>, name: &str) -> &'static str {
+    if columns.contains(name) { match name { "model" => "model", "cwd" => "cwd", _ => "NULL" } } else { "NULL" }
+}
 
 fn local_day_start() -> DateTime<Local> {
     let now = Local::now();
@@ -96,50 +166,110 @@ fn local_day_start() -> DateTime<Local> {
 
 fn timestamp(seconds: i64) -> Option<DateTime<Utc>> { if seconds <= 0 { None } else { DateTime::from_timestamp(seconds, 0) } }
 
-fn read_detailed_usage(connection: &Connection, columns: &HashSet<String>, day_start: DateTime<Local>, seven_day_start: DateTime<Local>, diagnostics: &mut Vec<DiagnosticItem>) -> Option<DetailedUsage> {
-    if !columns.contains("rollout_path") { return None; }
-    let model = column_or_null(columns, "model");
-    let mut statement = connection.prepare(&format!("SELECT DISTINCT rollout_path, {model} AS model FROM threads WHERE rollout_path IS NOT NULL AND rollout_path <> '' AND tokens_used > 0")).ok()?;
-    let sources: Vec<(String, Option<String>)> = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?))).ok()?.filter_map(Result::ok).collect();
-    if sources.is_empty() { return None; }
-    let now = Local::now();
-    let month_date = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1)?;
-    let month_start = Local.from_local_datetime(&month_date.and_hms_opt(0, 0, 0)?).earliest().unwrap_or(now).with_timezone(&Utc);
-    let day_start = day_start.with_timezone(&Utc);
-    let seven_day_start = seven_day_start.with_timezone(&Utc);
-    let mut usage = DetailedUsage::default();
-    for (path, _) in sources {
-        let parsed = parse_session_file(Path::new(&path), diagnostics);
-        let Some(parsed) = parsed else { continue; };
-        usage.parsed_file_count += 1;
-        usage.token_event_count += parsed.len();
-        for (at, delta) in parsed {
-            usage.lifetime.add_tokens(&delta);
-            if at >= month_start { usage.month.add_tokens(&delta); }
-            if at >= seven_day_start { usage.seven_day.add_tokens(&delta); }
-            if at >= day_start { usage.today.add_tokens(&delta); }
-        }
-    }
-    if usage.token_event_count == 0 { None } else { Some(usage) }
+fn safe_thread_title(id: &str) -> String {
+    let suffix = id.chars().filter(char::is_ascii_alphanumeric).rev().take(4).collect::<String>().chars().rev().collect::<String>();
+    format!("会话 {}", if suffix.is_empty() { "----" } else { &suffix })
 }
 
-fn parse_session_file(path: &Path, diagnostics: &mut Vec<DiagnosticItem>) -> Option<Vec<(DateTime<Utc>, TokenBreakdown)>> {
+fn safe_project_name(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    let parts = normalized.split('/').filter(|part| !part.is_empty()).collect::<Vec<_>>();
+    let Some(last) = parts.last().copied() else { return "本地项目".into(); };
+    let home_directory = parts.len() >= 2 && parts[parts.len() - 2].eq_ignore_ascii_case("users");
+    if home_directory || last.ends_with(':') || last == "Local project" { "本地项目".into() }
+    else { last.chars().take(32).collect() }
+}
+
+#[derive(Default)]
+struct SessionUsage {
+    detailed_usage: Option<DetailedUsage>,
+    skill_usage: Vec<NamedUsage>,
+    tool_usage: Vec<NamedUsage>,
+}
+
+#[derive(Default)]
+struct UsageCounter { calls: usize, estimated_tokens: i64 }
+
+#[derive(Default)]
+struct SessionParseResult {
+    deltas: Vec<(DateTime<Utc>, TokenBreakdown)>,
+    skills: HashMap<String, UsageCounter>,
+    tools: HashMap<String, UsageCounter>,
+}
+
+#[derive(Clone)]
+struct ToolContext { tool_name: String, skill_name: Option<String>, at: DateTime<Utc> }
+
+fn read_session_usage(connection: &Connection, columns: &HashSet<String>, day_start: DateTime<Local>, seven_day_start: DateTime<Local>, diagnostics: &mut Vec<DiagnosticItem>) -> SessionUsage {
+    if !columns.contains("rollout_path") { return SessionUsage::default(); }
+    let mut statement = match connection.prepare("SELECT DISTINCT rollout_path FROM threads WHERE rollout_path IS NOT NULL AND rollout_path <> '' AND tokens_used > 0") { Ok(statement) => statement, Err(_) => return SessionUsage::default() };
+    let sources: Vec<String> = match statement.query_map([], |row| row.get(0)) { Ok(rows) => rows.filter_map(Result::ok).collect(), Err(_) => return SessionUsage::default() };
+    let now = Local::now();
+    let month_date = match chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1) { Some(value) => value, None => return SessionUsage::default() };
+    let month_start = Local.from_local_datetime(&month_date.and_hms_opt(0, 0, 0).expect("valid month start")).earliest().unwrap_or(now).with_timezone(&Utc);
+    let mut usage = DetailedUsage::default();
+    let mut skills = HashMap::new();
+    let mut tools = HashMap::new();
+    for path in sources {
+        let Some(parsed) = parse_session_file(Path::new(&path), diagnostics) else { continue; };
+        usage.parsed_file_count += 1;
+        usage.token_event_count += parsed.deltas.len();
+        for (at, delta) in parsed.deltas {
+            usage.lifetime.add_tokens(&delta);
+            if at >= month_start { usage.month.add_tokens(&delta); }
+            if at >= seven_day_start.with_timezone(&Utc) { usage.seven_day.add_tokens(&delta); }
+            if at >= day_start.with_timezone(&Utc) { usage.today.add_tokens(&delta); }
+        }
+        merge_counters(&mut skills, parsed.skills);
+        merge_counters(&mut tools, parsed.tools);
+    }
+    SessionUsage {
+        detailed_usage: (!usage.token_event_count.eq(&0)).then_some(usage),
+        skill_usage: counters_to_named_usage(skills),
+        tool_usage: counters_to_named_usage(tools),
+    }
+}
+
+fn merge_counters(target: &mut HashMap<String, UsageCounter>, source: HashMap<String, UsageCounter>) {
+    for (name, counter) in source {
+        let entry = target.entry(name).or_default();
+        entry.calls += counter.calls;
+        entry.estimated_tokens += counter.estimated_tokens;
+    }
+}
+
+fn counters_to_named_usage(counters: HashMap<String, UsageCounter>) -> Vec<NamedUsage> {
+    let mut items = counters.into_iter().map(|(name, counter)| NamedUsage {
+        name, calls: counter.calls,
+        estimated_tokens: (counter.estimated_tokens > 0).then_some(counter.estimated_tokens),
+    }).collect::<Vec<_>>();
+    items.sort_by(|left, right| right.calls.cmp(&left.calls).then_with(|| right.estimated_tokens.cmp(&left.estimated_tokens)));
+    items.truncate(12);
+    items
+}
+
+fn parse_session_file(path: &Path, diagnostics: &mut Vec<DiagnosticItem>) -> Option<SessionParseResult> {
     let file = File::open(path).ok()?;
     let mut reader = BufReader::new(file);
     let mut raw = Vec::new();
     let mut previous = TokenBreakdown::default();
-    let mut deltas = Vec::new();
+    let mut result = SessionParseResult::default();
+    let mut active_context: Option<ToolContext> = None;
     let mut oversized = false;
     loop {
         raw.clear();
         let size = reader.read_until(b'\n', &mut raw).ok()?;
         if size == 0 { break; }
         if size > 1_048_576 { oversized = true; continue; }
-        if !raw.windows(b"\"type\":\"token_count\"".len()).any(|part| part == b"\"type\":\"token_count\"") { continue; }
         let Ok(value) = serde_json::from_slice::<Value>(&raw) else { continue; };
+        if let Some(context) = extract_tool_context(&value) {
+            result.tools.entry(context.tool_name.clone()).or_default().calls += 1;
+            if let Some(skill_name) = &context.skill_name { result.skills.entry(skill_name.clone()).or_default().calls += 1; }
+            active_context = Some(context);
+        }
         let payload = &value["payload"];
         if payload.get("type").and_then(Value::as_str) != Some("token_count") { continue; }
-        let Some(at) = value.get("timestamp").and_then(Value::as_str).and_then(|value| DateTime::parse_from_rfc3339(value).ok()).map(|value| value.with_timezone(&Utc)) else { continue; };
+        let Some(at) = event_timestamp(&value) else { continue; };
         let total = &payload["info"]["total_token_usage"];
         let current = TokenBreakdown {
             input_tokens: value_i64(total.get("input_tokens")), cached_input_tokens: value_i64(total.get("cached_input_tokens")), output_tokens: value_i64(total.get("output_tokens")), reasoning_output_tokens: value_i64(total.get("reasoning_output_tokens")), total_tokens: value_i64(total.get("total_tokens")),
@@ -147,10 +277,80 @@ fn parse_session_file(path: &Path, diagnostics: &mut Vec<DiagnosticItem>) -> Opt
         let mut delta = current.delta_from(&previous);
         if delta.has_negative_values() { delta = current.clone(); }
         previous = current;
-        if !delta.is_zero() { deltas.push((at, delta)); }
+        if delta.is_zero() { continue; }
+        if let Some(context) = &active_context {
+            if at.signed_duration_since(context.at).num_minutes().abs() <= ESTIMATE_CONTEXT_MINUTES {
+                result.tools.entry(context.tool_name.clone()).or_default().estimated_tokens += delta.total_tokens;
+                if let Some(skill_name) = &context.skill_name { result.skills.entry(skill_name.clone()).or_default().estimated_tokens += delta.total_tokens; }
+            }
+        }
+        result.deltas.push((at, delta));
     }
     if oversized { diagnostics.push(DiagnosticItem::warning("session_line_skipped", "A large session line was skipped while reading local usage.")); }
-    Some(deltas)
+    Some(result)
 }
 
-fn value_i64(value: Option<&Value>) -> i64 { value.and_then(Value::as_i64).or_else(|| value.and_then(Value::as_u64).and_then(|value| i64::try_from(value).ok())).unwrap_or(0) }
+fn extract_tool_context(value: &Value) -> Option<ToolContext> {
+    let payload = value.get("payload")?;
+    let payload_type = payload.get("type").and_then(Value::as_str).unwrap_or_default();
+    let item = payload.get("item");
+    let item_type = item.and_then(|value| value.get("type")).and_then(Value::as_str).unwrap_or_default();
+    if !matches!(payload_type, "tool_call" | "function_call") && !matches!(item_type, "tool_call" | "function_call") { return None; }
+    let tool_name = [payload, item.unwrap_or(&Value::Null)]
+        .into_iter()
+        .find_map(|candidate| field_string(candidate, &["tool_name", "name"]))?;
+    let skill_name = if tool_name.eq_ignore_ascii_case("skill") {
+        [payload.get("arguments"), item.and_then(|value| value.get("arguments"))]
+            .into_iter()
+            .flatten()
+            .find_map(|arguments| field_string(arguments, &["skill", "skill_name", "name"]))
+    } else { None };
+    Some(ToolContext { tool_name, skill_name, at: event_timestamp(value)? })
+}
+
+fn field_string(value: &Value, names: &[&str]) -> Option<String> {
+    names.iter().find_map(|name| value.get(*name).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.len() <= 80 && !value.contains(['\r', '\n']))
+        .map(str::to_owned)
+}
+
+fn event_timestamp(value: &Value) -> Option<DateTime<Utc>> {
+    value.get("timestamp").and_then(Value::as_str).and_then(|value| DateTime::parse_from_rfc3339(value).ok()).map(|value| value.with_timezone(&Utc))
+}
+
+fn value_i64(value: Option<&Value>) -> i64 {
+    value.and_then(Value::as_i64).or_else(|| value.and_then(Value::as_u64).and_then(|value| i64::try_from(value).ok())).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trend_covers_a_full_history_and_calculates_change() {
+        let days = (0..14).map(|index| DailyTokenBucket { id: index.to_string(), label: index.to_string(), tokens: if index < 7 { 10 } else { 20 } }).collect();
+        let trend = build_usage_trend(days);
+        assert_eq!(trend.previous_seven_day_tokens, 70);
+        assert_eq!(trend.seven_day_tokens, 140);
+        assert_eq!(trend.change_percent, Some(100.0));
+    }
+
+    #[test]
+    fn tool_context_collects_only_safe_names() {
+        let value = serde_json::json!({
+            "timestamp": "2026-01-01T00:00:00Z",
+            "payload": { "type": "function_call", "name": "Skill", "arguments": { "skill": "github" } }
+        });
+        let context = extract_tool_context(&value).expect("tool context");
+        assert_eq!(context.tool_name, "Skill");
+        assert_eq!(context.skill_name.as_deref(), Some("github"));
+    }
+
+    #[test]
+    fn local_display_fields_do_not_expose_full_paths_or_titles() {
+        assert_eq!(safe_project_name("C:\\Users\\name\\work\\private-project"), "private-project");
+        assert_eq!(safe_project_name("C:\\Users\\name"), "本地项目");
+        assert_eq!(safe_thread_title("thread-1234"), "会话 1234");
+    }
+}

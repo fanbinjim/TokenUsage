@@ -121,11 +121,9 @@ pub fn run() {
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_decorations(false);
-                let _ = window.set_background_color(None);
-                #[cfg(target_os = "windows")]
-                {
-                    let _ = window_vibrancy::apply_mica(&window, Some(true));
-                }
+                // WebView2 only supports either opaque or fully transparent alpha on Windows.
+                // Keep the native surface transparent and let the React glass layers supply tint.
+                let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
                 let _ = window.show();
                 let _ = window.set_focus();
             }

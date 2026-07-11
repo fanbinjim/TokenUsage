@@ -127,6 +127,33 @@ pub struct DailyTokenBucket {
     pub tokens: i64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageTrend {
+    pub days: Vec<DailyTokenBucket>,
+    pub seven_day_tokens: i64,
+    pub previous_seven_day_tokens: i64,
+    pub change_percent: Option<f64>,
+    pub is_new_activity: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectUsage {
+    pub name: String,
+    pub tokens: i64,
+    pub thread_count: i64,
+    pub last_active_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NamedUsage {
+    pub name: String,
+    pub calls: usize,
+    pub estimated_tokens: Option<i64>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalThread {
@@ -150,6 +177,10 @@ pub struct LocalUsage {
     pub daily_buckets: Vec<DailyTokenBucket>,
     pub recent_threads: Vec<LocalThread>,
     pub detailed_usage: Option<DetailedUsage>,
+    pub usage_trend: Option<UsageTrend>,
+    pub projects: Vec<ProjectUsage>,
+    pub skill_usage: Vec<NamedUsage>,
+    pub tool_usage: Vec<NamedUsage>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

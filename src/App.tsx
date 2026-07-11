@@ -6,6 +6,8 @@ import type {
   AppSettings,
   LocalThread,
   MultiRuntimeUsageSnapshot,
+  NamedUsage,
+  ProjectUsage,
   RateWindow,
   RuntimeScope,
   RuntimeUsageSnapshot,
@@ -16,19 +18,14 @@ import type {
    Helpers
    ======================================================== */
 
-function sanitizeThreadTitle(thread: LocalThread): string {
-  const raw = thread.title || "Untitled";
-  if (raw.includes("\\") || raw.includes("/")) {
-    const parts = raw.replace(/\\/g, "/").split("/");
-    return parts[parts.length - 1] || raw;
-  }
-  if (raw.length > 60) return raw.slice(0, 57) + "...";
-  return raw;
+export function safeThreadLabel(thread: LocalThread): string {
+  const suffix = thread.id.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase();
+  return `会话 ${suffix || "----"}`;
 }
 
-function shortCwd(cwd: string): string {
+export function shortCwd(cwd: string): string {
   const parts = cwd.replace(/\\/g, "/").split("/");
-  return parts[parts.length - 1] || cwd;
+  return parts[parts.length - 1]?.slice(0, 32) || "本地项目";
 }
 
 function formatShortTime(iso: string | null): string {
@@ -73,16 +70,7 @@ function statusText(status: string): string {
   }
 }
 
-function generateThreadId(index: number, prefix: string): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-  let id = "";
-  for (let i = 0; i < 4; i++) {
-    id += chars[Math.floor((index * (i + 1) * 7) % chars.length)];
-  }
-  return `${prefix}-${id}`;
-}
-
-function getPriorityFromTokens(tokens: number): "high" | "normal" | "low" {
+function getUsageLevel(tokens: number): "high" | "normal" | "low" {
   if (tokens > 50000) return "high";
   if (tokens > 10000) return "normal";
   return "low";
@@ -359,16 +347,8 @@ function DetailedTokenMetricCard({
    WoolProgressCard
    ======================================================== */
 
-const MILESTONES = [
-  { id: "plus", title: "Plus", amount: 20, color: "var(--status-info)" },
-  { id: "pro100", title: "Pro100", amount: 100, color: "var(--brand-secondary)" },
-  { id: "pro200", title: "Pro200", amount: 200, color: "var(--brand-primary-light)" },
-];
-
 function WoolProgressCard({ usage }: { usage: { estimatedCostUsd: number | null } | null | undefined }) {
-  const cost = usage?.estimatedCostUsd ?? 0;
-  const maxValue = 500;
-  const fillPct = Math.min(100, (cost / maxValue) * 100);
+  const estimate = usage?.estimatedCostUsd ?? null;
 
   return (
     <div className="wool-progress">
@@ -376,43 +356,13 @@ function WoolProgressCard({ usage }: { usage: { estimatedCostUsd: number | null 
         <span className="wool-progress-icon">
           <IconSparkle />
         </span>
-        <span className="wool-progress-title">羊毛进度</span>
-        <span className="wool-progress-amount">{formatUSD(usage?.estimatedCostUsd)}</span>
-        <span className="wool-progress-max">/ {formatCompactUSD(maxValue)}</span>
+        <span className="wool-progress-title">本月 API 等效价值</span>
+        <span className="wool-progress-amount">{formatUSD(estimate)}</span>
       </div>
-      <div className="wool-progress-bar">
-        {cost > 0 && (
-          <div className="wool-progress-fill" style={{ width: `${Math.max(2, fillPct)}%` }} />
-        )}
-        {MILESTONES.map((m) => {
-          const leftPct = (m.amount / maxValue) * 100;
-          return (
-            <div
-              key={m.id}
-              title={`${m.title} ${formatUSD(m.amount)}`}
-              style={{
-                position: "absolute",
-                left: `${leftPct}%`,
-                top: "50%",
-                transform: "translate(-50%, -50%)",
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: m.color,
-                border: "1.5px solid rgba(255,255,255,0.8)",
-              }}
-            />
-          );
-        })}
-      </div>
+      <div className="wool-progress-bar" />
       <div className="wool-progress-milestones">
-        {MILESTONES.map((m) => (
-          <div key={m.id} className="milestone">
-            <span className="dot" style={{ background: m.color }} />
-            {m.title}
-          </div>
-        ))}
-        <span className="wool-progress-cap">满额 {formatCompactUSD(maxValue)}</span>
+        <span className="milestone"><span className="dot" />仅统计可识别定价模型</span>
+        <span className="wool-progress-cap">未知模型不计入金额</span>
       </div>
     </div>
   );
@@ -444,7 +394,7 @@ function TitleBar({
       <div className="titlebar-left" data-tauri-drag-region="false">
         <div className="titlebar-brand">
           <div className="titlebar-brand-icon">U</div>
-          <span>codexU</span>
+          <span>TokenUsage</span>
         </div>
       </div>
 
@@ -486,8 +436,6 @@ function TitleBar({
           <button className="lang-btn active">中</button>
           <button className="lang-btn">EN</button>
         </div>
-
-        <div className="pro-badge">PRO</div>
 
         <div className="titlebar-divider" />
 
@@ -567,13 +515,15 @@ function TasksTab({ threads }: { threads: LocalThread[] }) {
       const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
       return tb - ta;
     });
-    const active = sorted.filter((t) => !t.archived);
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const active = sorted.filter((t) => !t.archived && (t.updatedAt ? new Date(t.updatedAt).getTime() >= cutoff : false));
+    const older = sorted.filter((t) => !t.archived && !active.includes(t));
     const done = sorted.filter((t) => t.archived).slice(0, 8);
     return [
-      { id: "active", title: "进行中", items: active.slice(0, 4), color: "active" },
-      { id: "pending", title: "待处理", items: active.slice(4, 6), color: "pending" },
-      { id: "scheduled", title: "定时", items: active.slice(6, 8), color: "scheduled" },
-      { id: "done", title: "完成", items: done, color: "done" },
+      { id: "active", title: "近 24 小时", items: active.slice(0, 8), color: "active" },
+      { id: "pending", title: "较早活动", items: older.slice(0, 8), color: "pending" },
+      { id: "scheduled", title: "定时任务", items: [] as LocalThread[], color: "scheduled" },
+      { id: "done", title: "已归档", items: done, color: "done" },
     ];
   }, [threads]);
 
@@ -589,7 +539,7 @@ function TasksTab({ threads }: { threads: LocalThread[] }) {
 
   return (
     <div className="kanban-board">
-      {columns.map((col, colIdx) => (
+      {columns.map((col) => (
         <div key={col.id} className="kanban-column">
           <div className="kanban-column-header">
             <span className={`kanban-column-dot ${col.color}`} />
@@ -599,24 +549,21 @@ function TasksTab({ threads }: { threads: LocalThread[] }) {
           </div>
           {col.items.length > 0 ? (
             <div className="kanban-items">
-              {col.items.map((thread, idx) => {
-                const priority = getPriorityFromTokens(thread.tokens || 0);
-                const threadId = generateThreadId(colIdx * 10 + idx, col.id === "active" ? "COD" : col.id === "scheduled" ? "AUTO" : "COD");
+              {col.items.map((thread) => {
+                const usageLevel = getUsageLevel(thread.tokens || 0);
                 const projectName = shortCwd(thread.cwd || "");
                 return (
                   <div key={thread.id} className="kanban-item">
                     <div className="kanban-item-header">
-                      <span className="kanban-item-id">{threadId}</span>
+                      <span className="kanban-item-id">{safeThreadLabel(thread)}</span>
                       <span className="kanban-item-time">{formatRelativeTime(thread.updatedAt)}</span>
                     </div>
-                    <span className="kanban-item-name" title={thread.title}>
-                      {sanitizeThreadTitle(thread)}
-                    </span>
+                    <span className="kanban-item-name">{thread.model || "Codex 会话"}</span>
                     <div className="kanban-item-meta">
                       <span className="kanban-item-project">{projectName}</span>
                       <span className="kanban-item-tokens">{formatTokens(thread.tokens)}</span>
-                      <span className={`kanban-item-badge ${priority}`}>
-                        {priority === "high" ? "High" : priority === "normal" ? "Normal" : "Low"}
+                      <span className={`kanban-item-badge ${usageLevel}`}>
+                        {usageLevel === "high" ? "高用量" : usageLevel === "normal" ? "中用量" : "低用量"}
                       </span>
                     </div>
                   </div>
@@ -626,7 +573,7 @@ function TasksTab({ threads }: { threads: LocalThread[] }) {
           ) : (
             <div className="kanban-empty">
               <IconClock />
-              <span>暂无</span>
+              <span>{col.id === "scheduled" ? "暂无可读取定时任务" : "暂无"}</span>
             </div>
           )}
         </div>
@@ -643,20 +590,18 @@ function TrendsTab({ local }: { local: NonNullable<RuntimeUsageSnapshot["snapsho
   const buckets = local.dailyBuckets ?? [];
   const detailed = local.detailedUsage;
   const trend = local.usageTrend;
-
   const heatmapWeeks = useMemo(() => {
-    if (!trend?.heatmapWeeks) return [];
-    return trend.heatmapWeeks;
+    const days = trend?.days ?? [];
+    return Array.from({ length: Math.ceil(days.length / 7) }, (_, index) => days.slice(index * 7, index * 7 + 7));
   }, [trend]);
-
-  const sevenDaySummary = useMemo(() => {
-    if (!trend?.summary) return null;
-    return {
-      tokens: trend.summary.sevenDay.tokens.visibleTotalTokens,
-      change: trend.summary.changePercent,
-      isNew: trend.summary.isNewActivity,
-    };
+  const heatmapThresholds = useMemo(() => {
+    const values = (trend?.days ?? []).map((day) => day.tokens).filter((tokens) => tokens > 0).sort((a, b) => a - b);
+    if (!values.length) return [0, 0, 0, 0];
+    return [0.25, 0.5, 0.75, 1].map((quantile) => values[Math.min(values.length - 1, Math.floor((values.length - 1) * quantile))]);
   }, [trend]);
+  const sevenDaySummary = trend
+    ? { tokens: trend.sevenDayTokens, change: trend.changePercent, isNew: trend.isNewActivity }
+    : detailed ? { tokens: detailed.sevenDay.tokens.totalTokens, change: null, isNew: false } : null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -668,23 +613,22 @@ function TrendsTab({ local }: { local: NonNullable<RuntimeUsageSnapshot["snapsho
           <div className="heatmap-container">
             <div className="heatmap-weeks">
               {heatmapWeeks.length > 0 ? (
-                heatmapWeeks.slice(0, 26).map((week: any, wi: number) => (
+                heatmapWeeks.map((week, wi) => (
                   <div key={wi} className="heatmap-week">
-                    {week.map((day: any, di: number) => {
+                    {week.map((day, di) => {
                       const tokens = day.tokens || 0;
                       let level = 0;
                       if (tokens > 0) {
-                        const thresholds = trend?.heatmapThresholds || [1000, 5000, 20000, 80000];
-                        if (tokens >= thresholds[3]) level = 4;
-                        else if (tokens >= thresholds[2]) level = 3;
-                        else if (tokens >= thresholds[1]) level = 2;
-                        else if (tokens >= thresholds[0]) level = 1;
+                        if (tokens >= heatmapThresholds[3]) level = 4;
+                        else if (tokens >= heatmapThresholds[2]) level = 3;
+                        else if (tokens >= heatmapThresholds[1]) level = 2;
+                        else if (tokens >= heatmapThresholds[0]) level = 1;
                       }
                       return (
                         <div
                           key={di}
                           className={`heatmap-cell${level > 0 ? ` level-${level}` : ""}`}
-                          title={day.date ? new Date(day.date).toLocaleDateString() : ""}
+                          title={day.id}
                         />
                       );
                     })}
@@ -825,23 +769,8 @@ function SevenDayLineChart({ buckets }: { buckets: { id: string; label: string; 
    Projects Tab
    ======================================================== */
 
-function ProjectsTab({ threads }: { threads: LocalThread[] }) {
-  const projects = useMemo(() => {
-    const map = new Map<string, { cwd: string; tokens: number; count: number; lastActive: string | null }>();
-    for (const t of threads) {
-      const dir = shortCwd(t.cwd);
-      const entry = map.get(dir) || { cwd: dir, tokens: 0, count: 0, lastActive: null };
-      entry.tokens += t.tokens;
-      entry.count += 1;
-      if (!entry.lastActive || (t.updatedAt && t.updatedAt > entry.lastActive)) {
-        entry.lastActive = t.updatedAt;
-      }
-      map.set(dir, entry);
-    }
-    return Array.from(map.values()).sort((a, b) => b.tokens - a.tokens).slice(0, 24);
-  }, [threads]);
-
-  const activeCount = projects.filter((p) => p.count > 0).length;
+function ProjectsTab({ projects }: { projects: ProjectUsage[] }) {
+  const activeCount = projects.filter((project) => project.lastActiveAt && new Date(project.lastActiveAt).getTime() >= Date.now() - 7 * 24 * 60 * 60 * 1000).length;
 
   if (!projects.length) {
     return (
@@ -855,46 +784,58 @@ function ProjectsTab({ threads }: { threads: LocalThread[] }) {
   const maxTokens = projects[0]?.tokens ?? 1;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-      <div className="project-overview">
-        <div className="project-overview-card">
-          <h4>活跃项目排行</h4>
-          <div className="project-overview-value">{activeCount}</div>
-          <div className="project-overview-sub">近 7 天活跃</div>
-        </div>
-        <div className="project-overview-card">
-          <h4>项目活动概览</h4>
-          <div className="project-overview-value">{projects.length}</div>
-          <div className="project-overview-sub">全部项目</div>
-        </div>
-      </div>
-
-      <div className="project-list">
+    <div className="workspace-two-column">
+      <section className="workspace-panel">
+        <div className="workspace-panel-header"><span>项目用量排行</span><span>全部</span></div>
+        <div className="project-list">
         {projects.map((proj, idx) => (
-          <div key={proj.cwd} className="project-item">
+          <div key={proj.name} className="project-item">
             <span className="project-rank">{idx + 1}</span>
-            <span className="project-name" title={proj.cwd}>{proj.cwd}</span>
+            <span className="project-name">{shortCwd(proj.name)}</span>
             <div className="project-bar-wrap">
               <div className="project-bar" style={{ width: `${(proj.tokens / maxTokens) * 100}%` }} />
             </div>
             <span className="project-tokens">{formatTokens(proj.tokens)}</span>
           </div>
         ))}
-      </div>
+        </div>
+      </section>
+      <section className="workspace-panel">
+        <div className="workspace-panel-header"><span>项目活动概览</span><span>近 7 天</span></div>
+        <div className="project-overview">
+          <div className="project-overview-card"><h4>活跃项目</h4><div className="project-overview-value">{activeCount}</div></div>
+          <div className="project-overview-card"><h4>全部项目</h4><div className="project-overview-value">{projects.length}</div></div>
+        </div>
+        <div className="project-activity-list">
+          {projects.slice(0, 6).map((project) => (
+            <div key={project.name} className="project-activity-item"><span>{shortCwd(project.name)}</span><span>{project.threadCount} 线程 · {formatRelativeTime(project.lastActiveAt)}</span></div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
 
-/* ========================================================
-   Skills Tab
-   ======================================================== */
+function UsageRankList({ items, emptyText }: { items: NamedUsage[]; emptyText: string }) {
+  if (!items.length) return <div className="empty-state compact"><div className="empty-state-title">{emptyText}</div></div>;
+  const maxCalls = Math.max(...items.map((item) => item.calls), 1);
+  return <div className="usage-rank-list">{items.map((item) => (
+    <div key={item.name} className="usage-rank-item">
+      <div className="usage-rank-row"><span>{item.name}</span><strong>{item.calls} 次</strong></div>
+      <div className="project-bar-wrap"><div className="project-bar" style={{ width: `${(item.calls / maxCalls) * 100}%` }} /></div>
+      <span className="usage-rank-estimate">{item.estimatedTokens == null ? "--" : `估算 ${formatTokens(item.estimatedTokens)}`}</span>
+    </div>
+  ))}</div>;
+}
 
-function SkillsTab() {
+function SkillsTab({ skills, tools }: { skills: NamedUsage[]; tools: NamedUsage[] }) {
+  if (!skills.length && !tools.length) {
+    return <div className="empty-state"><div className="empty-state-icon">&#9889;</div><div className="empty-state-title">暂无可读取的 Skill 或工具事件</div></div>;
+  }
   return (
-    <div className="empty-state">
-      <div className="empty-state-icon">&#9889;</div>
-      <div className="empty-state-title">Skill 分析即将推出</div>
-      <div>此功能将在后续版本中提供</div>
+    <div className="workspace-two-column">
+      <section className="workspace-panel"><div className="workspace-panel-header"><span>Skill 使用排行</span><span>{skills.length} 项</span></div><UsageRankList items={skills} emptyText="暂无 Skill 事件" /></section>
+      <section className="workspace-panel"><div className="workspace-panel-header"><span>工具使用排行</span><span>{tools.length} 项</span></div><UsageRankList items={tools} emptyText="暂无工具事件" /></section>
     </div>
   );
 }
@@ -1051,13 +992,11 @@ export default function App() {
         return `${count} 事项`;
       }
       case "trends":
-        return local?.dailyBuckets ? `${local.dailyBuckets.length} 活跃日` : "读取中";
-      case "projects": {
-        const set = new Set(local?.recentThreads?.map((t) => shortCwd(t.cwd)) ?? []);
-        return `${set.size} 活跃项目 · ${set.size} 全部`;
-      }
+        return local?.usageTrend ? `${local.usageTrend.days.filter((day) => day.tokens > 0).length} 活跃日` : "暂无趋势";
+      case "projects":
+        return `${local?.projects.length ?? 0} 个项目`;
       case "skills":
-        return "0 Skill · 0 工具";
+        return `${local?.skillUsage.length ?? 0} Skill · ${local?.toolUsage.length ?? 0} 工具`;
     }
   }, [activeTab, runtime]);
 
@@ -1131,27 +1070,10 @@ export default function App() {
                 <div className="empty-state-title">暂无本地统计数据</div>
               </div>
             )}
-            {activeTab === "projects" && <ProjectsTab threads={runtime.snapshot.local?.recentThreads ?? []} />}
-            {activeTab === "skills" && <SkillsTab />}
+            {activeTab === "projects" && <ProjectsTab projects={runtime.snapshot.local?.projects ?? []} />}
+            {activeTab === "skills" && <SkillsTab skills={runtime.snapshot.local?.skillUsage ?? []} tools={runtime.snapshot.local?.toolUsage ?? []} />}
           </div>
         </section>
-
-        {runtime.snapshot.diagnostics.length > 0 && (
-          <div className="glass-section diagnostics-panel">
-            <h3>数据诊断</h3>
-            <div className="diagnostics-list">
-              {runtime.snapshot.diagnostics.map((item) => (
-                <div key={`${item.code}-${item.message}`} className={`diagnostics-item severity-${item.severity}`}>
-                  <span className="icon">!</span>
-                  <div className="content">
-                    <div className="title">{item.code}</div>
-                    <div className="detail">{item.message}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       <footer className="footer">
