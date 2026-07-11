@@ -105,6 +105,8 @@ export interface AppSettings {
   quickPanelDensity: "compact" | "detailed";
   keepRunningWhenMainWindowClosed: boolean;
   keepMainWindowOnTop: boolean;
+  taskbarWidgetEnabled: boolean;
+  taskbarWidgetRightOffset: number;
   automaticUpdateChecksEnabled: boolean;
   receivePrereleases: boolean;
   codexExecutablePath: string | null;

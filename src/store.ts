@@ -10,6 +10,8 @@ interface UsageState {
   bootstrap: () => Promise<void>;
   refresh: () => Promise<void>;
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>;
+  setSnapshot: (snapshot: MultiRuntimeUsageSnapshot) => void;
+  setSettings: (settings: AppSettings) => void;
 }
 
 export const useUsageStore = create<UsageState>((set) => ({
@@ -39,4 +41,6 @@ export const useUsageStore = create<UsageState>((set) => ({
     const settings = await api.saveSettings(patch);
     set({ settings });
   },
+  setSnapshot: (snapshot) => set({ snapshot, isLoading: false, error: null }),
+  setSettings: (settings) => set({ settings }),
 }));

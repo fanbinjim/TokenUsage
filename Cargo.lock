@@ -3775,6 +3775,7 @@ dependencies = [
  "tauri-plugin-window-state",
  "tokenusage-core",
  "window-vibrancy 0.7.1",
+ "windows",
 ]
 
 [[package]]

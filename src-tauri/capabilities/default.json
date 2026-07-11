@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-capability",
   "description": "Core TokenUsage desktop capability.",
-  "windows": ["main"],
+  "windows": ["main", "taskbar-widget"],
   "permissions": [
     "core:default",
     "core:window:allow-close",

@@ -1,0 +1,65 @@
+.taskbar-widget {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  padding: 2px 4px;
+  color: rgba(18, 54, 86, 0.92);
+  font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+}
+
+.taskbar-widget-row {
+  --quota-color: #367bb7;
+  display: grid;
+  grid-template-columns: 19px minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.taskbar-widget-label,
+.taskbar-widget-value {
+  color: #344454;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.taskbar-widget-row.quota-danger {
+  --quota-color: #cf515a;
+}
+
+.taskbar-widget-row.quota-warning {
+  --quota-color: #b98220;
+}
+
+.taskbar-widget-row.quota-info {
+  --quota-color: #367bb7;
+}
+
+.taskbar-widget-row.quota-healthy {
+  --quota-color: #2f9064;
+}
+
+.taskbar-widget-track {
+  display: block;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(33, 101, 159, 0.2);
+}
+
+.taskbar-widget-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: left center;
+  border-radius: inherit;
+  background: var(--quota-color);
+  transition: transform 180ms ease-out, background-color 180ms ease-out;
+}

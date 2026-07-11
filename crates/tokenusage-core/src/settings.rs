@@ -5,6 +5,7 @@ use std::{fs, path::{Path, PathBuf}};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct AppSettings {
     pub schema_version: u32,
     pub language: String,
@@ -15,6 +16,8 @@ pub struct AppSettings {
     pub quick_panel_density: String,
     pub keep_running_when_main_window_closed: bool,
     pub keep_main_window_on_top: bool,
+    pub taskbar_widget_enabled: bool,
+    pub taskbar_widget_right_offset: u32,
     pub automatic_update_checks_enabled: bool,
     pub receive_prereleases: bool,
     pub codex_executable_path: Option<String>,
@@ -28,6 +31,7 @@ impl Default for AppSettings {
             schema_version: 1, language: "auto".into(), theme: "system".into(), selected_runtime: RuntimeScope::Codex,
             visible_runtimes: vec![RuntimeScope::Codex, RuntimeScope::ClaudeCode], show_used_quota: false,
             quick_panel_density: "compact".into(), keep_running_when_main_window_closed: true, keep_main_window_on_top: false,
+            taskbar_widget_enabled: true, taskbar_widget_right_offset: 1050,
             automatic_update_checks_enabled: true, receive_prereleases: false, codex_executable_path: None,
             codex_data_directory: None, claude_data_directory: None,
         }
@@ -45,6 +49,8 @@ pub struct SettingsPatch {
     pub quick_panel_density: Option<String>,
     pub keep_running_when_main_window_closed: Option<bool>,
     pub keep_main_window_on_top: Option<bool>,
+    pub taskbar_widget_enabled: Option<bool>,
+    pub taskbar_widget_right_offset: Option<u32>,
     pub automatic_update_checks_enabled: Option<bool>,
     pub receive_prereleases: Option<bool>,
     pub codex_executable_path: Option<Option<String>>,
@@ -66,6 +72,8 @@ impl AppSettings {
         if let Some(value) = patch.quick_panel_density { self.quick_panel_density = value; }
         if let Some(value) = patch.keep_running_when_main_window_closed { self.keep_running_when_main_window_closed = value; }
         if let Some(value) = patch.keep_main_window_on_top { self.keep_main_window_on_top = value; }
+        if let Some(value) = patch.taskbar_widget_enabled { self.taskbar_widget_enabled = value; }
+        if let Some(value) = patch.taskbar_widget_right_offset { self.taskbar_widget_right_offset = value.clamp(0, 3000); }
         if let Some(value) = patch.automatic_update_checks_enabled { self.automatic_update_checks_enabled = value; }
         if let Some(value) = patch.receive_prereleases { self.receive_prereleases = value; }
         if let Some(value) = patch.codex_executable_path { self.codex_executable_path = value; }
@@ -122,5 +130,19 @@ mod tests {
         settings.theme = "dark".into();
         store.save(&settings).expect("replacement settings save");
         assert_eq!(store.load().theme, "dark");
+    }
+
+    #[test]
+    fn old_settings_files_receive_taskbar_widget_defaults() {
+        let settings: AppSettings = serde_json::from_str(r#"{"theme":"light"}"#).expect("legacy settings parse");
+        assert!(settings.taskbar_widget_enabled);
+        assert_eq!(settings.taskbar_widget_right_offset, 1050);
+    }
+
+    #[test]
+    fn taskbar_widget_offset_is_bounded() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch { taskbar_widget_right_offset: Some(9_000), ..Default::default() });
+        assert_eq!(settings.taskbar_widget_right_offset, 3000);
     }
 }

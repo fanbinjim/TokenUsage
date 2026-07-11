@@ -5,6 +5,7 @@ import { useUsageStore } from "./store";
 import type {
   AppSettings,
   LocalThread,
+  MultiRuntimeUsageSnapshot,
   RateWindow,
   RuntimeScope,
   RuntimeUsageSnapshot,
@@ -953,6 +954,20 @@ function SettingsModal({
             <input type="checkbox" checked={settings.keepMainWindowOnTop} onChange={(e) => onUpdate({ keepMainWindowOnTop: e.target.checked })} />
           </div>
           <div className="settings-toggle">
+            <span>任务栏常驻用量条</span>
+            <input type="checkbox" checked={settings.taskbarWidgetEnabled} onChange={(e) => onUpdate({ taskbarWidgetEnabled: e.target.checked })} />
+          </div>
+          <div className="settings-field">
+            <label>任务栏距右侧偏移（像素）</label>
+            <input
+              type="number"
+              min="0"
+              max="3000"
+              value={settings.taskbarWidgetRightOffset}
+              onChange={(e) => onUpdate({ taskbarWidgetRightOffset: Number(e.target.value) || 0 })}
+            />
+          </div>
+          <div className="settings-toggle">
             <span>自动检查更新</span>
             <input type="checkbox" checked={settings.automaticUpdateChecksEnabled} onChange={(e) => onUpdate({ automaticUpdateChecksEnabled: e.target.checked })} />
           </div>
@@ -984,7 +999,7 @@ const TABS: { id: TabId; label: string; icon: () => React.ReactNode }[] = [
 ];
 
 export default function App() {
-  const { settings, snapshot, isLoading, error, bootstrap, refresh, updateSettings } = useUsageStore();
+  const { settings, snapshot, isLoading, error, bootstrap, refresh, updateSettings, setSnapshot, setSettings } = useUsageStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("tasks");
   const [uiTheme, setUiTheme] = useState<"light" | "dark">("dark");
@@ -998,6 +1013,14 @@ export default function App() {
     const unlisten = listen("tokenusage://open-settings", () => setSettingsOpen(true));
     return () => { unlisten.then((d: () => void) => d()); };
   }, []);
+  useEffect(() => {
+    const unlisten = listen<MultiRuntimeUsageSnapshot>("tokenusage://snapshot", ({ payload }) => setSnapshot(payload));
+    return () => { unlisten.then((d: () => void) => d()); };
+  }, [setSnapshot]);
+  useEffect(() => {
+    const unlisten = listen<AppSettings>("tokenusage://settings-updated", ({ payload }) => setSettings(payload));
+    return () => { unlisten.then((d: () => void) => d()); };
+  }, [setSettings]);
 
   const handleRefresh = useCallback(() => { void refresh(); }, [refresh]);
   const handleUpdateSettings = useCallback(

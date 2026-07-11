@@ -1,13 +1,31 @@
-use std::sync::Mutex;
+use std::{sync::Mutex, time::Duration};
 
-use tauri::{Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::window::Color;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tokenusage_core::{AppSettings, DataPaths, MultiRuntimeUsageSnapshot, SettingsPatch, SettingsStore, load_multi_runtime};
 
+#[cfg(target_os = "windows")]
+use windows::{
+    Win32::{
+        Foundation::RECT,
+        UI::WindowsAndMessaging::{
+            FindWindowW, GA_PARENT, GetAncestor, GetWindowRect, SWP_NOACTIVATE, SWP_NOZORDER,
+            SWP_SHOWWINDOW, SetParent, SetWindowPos,
+        },
+    },
+    core::{PCWSTR, w},
+};
+
 struct AppState {
     settings: Mutex<AppSettings>,
+    snapshot: Mutex<Option<MultiRuntimeUsageSnapshot>>,
 }
+
+const TASKBAR_WIDGET_LABEL: &str = "taskbar-widget";
+const TASKBAR_WIDGET_WIDTH: f64 = 184.0;
+const TASKBAR_WIDGET_VERTICAL_MARGIN: f64 = 3.0;
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,29 +44,52 @@ fn load_usage(settings: &AppSettings) -> MultiRuntimeUsageSnapshot {
 }
 
 #[tauri::command]
-async fn bootstrap(state: State<'_, AppState>) -> Result<BootstrapPayload, String> {
+async fn bootstrap(app: AppHandle, state: State<'_, AppState>) -> Result<BootstrapPayload, String> {
     let settings = state.settings.lock().map_err(|_| "Application settings are unavailable.")?.clone();
+    if let Some(snapshot) = state.snapshot.lock().map_err(|_| "Usage snapshot is unavailable.")?.clone() {
+        return Ok(BootstrapPayload { settings, snapshot });
+    }
     let snapshot = tauri::async_runtime::spawn_blocking({
         let settings = settings.clone();
         move || load_usage(&settings)
     }).await.map_err(|_| "Usage refresh task failed.")?;
+    store_and_publish_snapshot(&app, &state, snapshot.clone())?;
     Ok(BootstrapPayload { settings, snapshot })
 }
 
 #[tauri::command]
-async fn refresh_usage(state: State<'_, AppState>, _force: bool) -> Result<MultiRuntimeUsageSnapshot, String> {
+async fn refresh_usage(app: AppHandle, state: State<'_, AppState>, _force: bool) -> Result<MultiRuntimeUsageSnapshot, String> {
     let settings = state.settings.lock().map_err(|_| "Application settings are unavailable.")?.clone();
     let snapshot = tauri::async_runtime::spawn_blocking(move || load_usage(&settings))
         .await.map_err(|_| "Usage refresh task failed.")?;
+    store_and_publish_snapshot(&app, &state, snapshot.clone())?;
     Ok(snapshot)
 }
 
 #[tauri::command]
-fn save_settings(state: State<'_, AppState>, patch: SettingsPatch) -> Result<AppSettings, String> {
+fn save_settings(app: AppHandle, state: State<'_, AppState>, patch: SettingsPatch) -> Result<AppSettings, String> {
     let mut settings = state.settings.lock().map_err(|_| "Application settings are unavailable.")?;
     settings.apply_patch(patch);
     config_store(&settings).save(&settings).map_err(|_| "Settings could not be saved.")?;
-    Ok(settings.clone())
+    let updated = settings.clone();
+    drop(settings);
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_always_on_top(updated.keep_main_window_on_top);
+    }
+    sync_taskbar_widget(&app, &updated);
+    let _ = app.emit("tokenusage://settings-updated", &updated);
+    Ok(updated)
+}
+
+fn store_and_publish_snapshot(
+    app: &AppHandle,
+    state: &AppState,
+    snapshot: MultiRuntimeUsageSnapshot,
+) -> Result<(), String> {
+    *state.snapshot.lock().map_err(|_| "Usage snapshot is unavailable.")? = Some(snapshot.clone());
+    let _ = app.emit("tokenusage://snapshot", snapshot);
+    Ok(())
 }
 
 pub fn run() {
@@ -57,7 +98,7 @@ pub fn run() {
         config_store(&defaults).load()
     };
     tauri::Builder::default()
-        .manage(AppState { settings: Mutex::new(initial_settings) })
+        .manage(AppState { settings: Mutex::new(initial_settings), snapshot: Mutex::new(None) })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -88,6 +129,8 @@ pub fn run() {
                 let _ = window.show();
                 let _ = window.set_focus();
             }
+            create_taskbar_widget(app)?;
+            start_usage_refresh_loop(app.handle().clone());
             let open = MenuItem::with_id(app, "open", "Open TokenUsage", true, None::<&str>)?;
             let refresh = MenuItem::with_id(app, "refresh", "Refresh", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
@@ -124,6 +167,159 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![bootstrap, refresh_usage, save_settings])
         .run(tauri::generate_context!())
         .expect("error while running TokenUsage");
+}
+
+fn start_usage_refresh_loop(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(300));
+        let Some(state) = app.try_state::<AppState>() else { return; };
+        let Ok(settings) = state.settings.lock().map(|settings| settings.clone()) else { continue; };
+        sync_taskbar_widget(&app, &settings);
+        let snapshot = load_usage(&settings);
+        let _ = store_and_publish_snapshot(&app, &state, snapshot);
+    });
+}
+
+#[cfg(target_os = "windows")]
+fn create_taskbar_widget(app: &tauri::App) -> tauri::Result<()> {
+    if app.get_webview_window(TASKBAR_WIDGET_LABEL).is_some() {
+        return Ok(());
+    }
+    let widget = WebviewWindowBuilder::new(app, TASKBAR_WIDGET_LABEL, WebviewUrl::App("index.html".into()))
+        .title("TokenUsage Taskbar Widget")
+        .inner_size(TASKBAR_WIDGET_WIDTH, 34.0)
+        .resizable(false)
+        .decorations(false)
+        .transparent(true)
+        .background_color(Color(0, 0, 0, 0))
+        .always_on_top(false)
+        .skip_taskbar(true)
+        .focusable(false)
+        .shadow(false)
+        .visible(false)
+        .on_page_load(|widget, payload| {
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                let app = widget.app_handle();
+                let settings = app.state::<AppState>().settings.lock().map(|settings| settings.clone()).unwrap_or_default();
+                sync_taskbar_widget(app, &settings);
+            }
+        })
+        .build()?;
+    let _ = widget.set_background_color(Some(Color(0, 0, 0, 0)));
+    let _ = widget.set_ignore_cursor_events(true);
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn create_taskbar_widget(_app: &tauri::App) -> tauri::Result<()> {
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn sync_taskbar_widget(app: &AppHandle, settings: &AppSettings) {
+    let Some(widget) = app.get_webview_window(TASKBAR_WIDGET_LABEL) else { return; };
+    if !settings.taskbar_widget_enabled {
+        let _ = widget.hide();
+        return;
+    }
+    if !position_taskbar_widget(app, &widget, settings.taskbar_widget_right_offset) {
+        let _ = widget.hide();
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn sync_taskbar_widget(_app: &AppHandle, _settings: &AppSettings) {}
+
+#[cfg(target_os = "windows")]
+fn taskbar_handle() -> Option<windows::Win32::Foundation::HWND> {
+    unsafe { FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()).ok() }
+}
+
+#[cfg(target_os = "windows")]
+fn attach_taskbar_widget(widget: &WebviewWindow) -> bool {
+    let (Ok(hwnd), Some(taskbar)) = (widget.hwnd(), taskbar_handle()) else { return false; };
+    if unsafe { GetAncestor(hwnd, GA_PARENT) } == taskbar {
+        return true;
+    }
+
+    // SetParent may return a null previous parent even when the operation succeeds.
+    let _ = unsafe { SetParent(hwnd, Some(taskbar)) };
+    (unsafe { GetAncestor(hwnd, GA_PARENT) }) == taskbar
+}
+
+#[cfg(target_os = "windows")]
+fn position_taskbar_widget(app: &AppHandle, widget: &WebviewWindow, right_offset: u32) -> bool {
+    if attach_taskbar_widget(widget) {
+        return position_embedded_taskbar_widget(app, widget, right_offset);
+    }
+
+    let _ = widget.show();
+    let Ok(Some(monitor)) = app.primary_monitor() else { return false; };
+    let monitor_position = monitor.position();
+    let monitor_size = monitor.size();
+    let work_area = monitor.work_area();
+    let screen_left = monitor_position.x;
+    let screen_top = monitor_position.y;
+    let screen_right = screen_left.saturating_add(monitor_size.width as i32);
+    let screen_bottom = screen_top.saturating_add(monitor_size.height as i32);
+    let work_top = work_area.position.y;
+    let work_bottom = work_top.saturating_add(work_area.size.height as i32);
+
+    let taskbar_top = if work_top > screen_top { Some(screen_top) } else if work_bottom < screen_bottom { Some(work_bottom) } else { None };
+    let Some(taskbar_top) = taskbar_top else { return false; };
+    let taskbar_bottom = if taskbar_top == screen_top { work_top } else { screen_bottom };
+    let taskbar_height = taskbar_bottom.saturating_sub(taskbar_top);
+    if taskbar_height <= 0 { return false; }
+
+    let scale_factor = monitor.scale_factor();
+    let margin = (TASKBAR_WIDGET_VERTICAL_MARGIN * scale_factor).round() as i32;
+    let width = (TASKBAR_WIDGET_WIDTH * scale_factor).round() as u32;
+    let height = taskbar_height.saturating_sub(margin.saturating_mul(2)) as u32;
+    if height == 0 { return false; }
+    let offset = (right_offset as f64 * scale_factor).round() as i32;
+    let x = screen_right.saturating_sub(offset).saturating_sub(width as i32).max(screen_left);
+    let y = taskbar_top.saturating_add(margin);
+
+    widget.set_size(PhysicalSize::new(width, height)).is_ok()
+        && widget.set_position(PhysicalPosition::new(x, y)).is_ok()
+}
+
+#[cfg(target_os = "windows")]
+fn position_embedded_taskbar_widget(app: &AppHandle, widget: &WebviewWindow, right_offset: u32) -> bool {
+    let (Ok(hwnd), Some(taskbar), Ok(Some(monitor))) = (widget.hwnd(), taskbar_handle(), app.primary_monitor()) else { return false; };
+    let mut taskbar_rect = RECT::default();
+    if unsafe { GetWindowRect(taskbar, &mut taskbar_rect) }.is_err() {
+        return false;
+    }
+
+    let taskbar_width = taskbar_rect.right.saturating_sub(taskbar_rect.left);
+    let taskbar_height = taskbar_rect.bottom.saturating_sub(taskbar_rect.top);
+    if taskbar_width <= taskbar_height || taskbar_height <= 0 {
+        return false;
+    }
+
+    let scale_factor = monitor.scale_factor();
+    let margin = (TASKBAR_WIDGET_VERTICAL_MARGIN * scale_factor).round() as i32;
+    let width = (TASKBAR_WIDGET_WIDTH * scale_factor).round() as i32;
+    let height = taskbar_height.saturating_sub(margin.saturating_mul(2));
+    let offset = (right_offset as f64 * scale_factor).round() as i32;
+    let x = taskbar_width.saturating_sub(offset).saturating_sub(width).max(0);
+    if width <= 0 || height <= 0 {
+        return false;
+    }
+
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            x,
+            margin,
+            width,
+            height,
+            SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW,
+        )
+    }
+    .is_ok()
 }
 
 fn show_main_window(app: &tauri::AppHandle) {
