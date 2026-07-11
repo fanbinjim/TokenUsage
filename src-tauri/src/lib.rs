@@ -81,6 +81,12 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_decorations(false);
                 let _ = window.set_background_color(None);
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = window_vibrancy::apply_mica(&window, Some(true));
+                }
+                let _ = window.show();
+                let _ = window.set_focus();
             }
             let open = MenuItem::with_id(app, "open", "Open TokenUsage", true, None::<&str>)?;
             let refresh = MenuItem::with_id(app, "refresh", "Refresh", true, None::<&str>)?;

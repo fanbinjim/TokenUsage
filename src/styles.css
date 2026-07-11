@@ -109,11 +109,17 @@
   padding: 0;
 }
 
-html, body, #root {
+html {
+  height: 100%;
+  background: transparent;
+}
+
+body, #root {
   height: 100%;
   overflow: hidden;
   scrollbar-width: none;
   -ms-overflow-style: none;
+  background: transparent;
 }
 
 html::-webkit-scrollbar, body::-webkit-scrollbar, #root::-webkit-scrollbar {
@@ -131,7 +137,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Purple gradient window background */
+/* Purple gradient window background — Mica 模式下调低不透明度让桌面颜色透出 */
 .app-shell::before {
   content: "";
   position: absolute;
@@ -140,7 +146,7 @@ body {
     radial-gradient(ellipse at 15% 85%, rgba(139, 109, 255, 0.45) 0%, transparent 50%),
     radial-gradient(ellipse at 85% 15%, rgba(218, 163, 250, 0.35) 0%, transparent 45%),
     radial-gradient(ellipse at 50% 50%, rgba(123, 160, 255, 0.15) 0%, transparent 65%),
-    linear-gradient(145deg, #2a1f55 0%, #4a2d8a 35%, #6b3fa0 65%, #8b5cf6 100%);
+    linear-gradient(145deg, rgba(42, 31, 85, 0.88) 0%, rgba(74, 45, 138, 0.88) 35%, rgba(107, 63, 160, 0.88) 65%, rgba(139, 92, 246, 0.88) 100%);
   z-index: -2;
   border-radius: var(--window-corner-radius);
 }
