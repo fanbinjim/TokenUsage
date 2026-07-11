@@ -212,9 +212,9 @@ function DualQuotaRing({ primary, secondary }: { primary: RateWindow | null; sec
             <stop offset="100%" stopColor="#A8C8FF" />
           </linearGradient>
           <linearGradient id="innerGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#DAA3FA" />
-            <stop offset="50%" stopColor="#8B6DFF" />
-            <stop offset="100%" stopColor="#E0C0FF" />
+            <stop offset="0%" stopColor="#9DDCFF" />
+            <stop offset="50%" stopColor="#32ADE6" />
+            <stop offset="100%" stopColor="#7FE7DC" />
           </linearGradient>
         </defs>
         <circle className="ring-track" cx={cx} cy={cy} r={outerR} strokeWidth={strokeW} />
@@ -672,28 +672,6 @@ function TrendsTab({ local }: { local: NonNullable<RuntimeUsageSnapshot["snapsho
         </div>
       </div>
 
-      {detailed && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-          <div className="trend-card">
-            <div className="trend-card-header">
-              <span className="trend-card-title">Token 拆分（今日）</span>
-            </div>
-            <TokenSplitBar tokens={detailed.today.tokens} />
-            <div style={{ marginTop: "8px" }}>
-              <TokenSplitLegend tokens={detailed.today.tokens} />
-            </div>
-          </div>
-          <div className="trend-card">
-            <div className="trend-card-header">
-              <span className="trend-card-title">Token 拆分（近 7 天）</span>
-            </div>
-            <TokenSplitBar tokens={detailed.sevenDay.tokens} />
-            <div style={{ marginTop: "8px" }}>
-              <TokenSplitLegend tokens={detailed.sevenDay.tokens} />
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -962,6 +940,17 @@ export default function App() {
     const unlisten = listen<AppSettings>("tokenusage://settings-updated", ({ payload }) => setSettings(payload));
     return () => { unlisten.then((d: () => void) => d()); };
   }, [setSettings]);
+  useEffect(() => {
+    if (!settings) return;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      setUiTheme(settings.theme === "system" ? (media.matches ? "dark" : "light") : settings.theme);
+    };
+    applyTheme();
+    if (settings.theme !== "system") return;
+    media.addEventListener("change", applyTheme);
+    return () => media.removeEventListener("change", applyTheme);
+  }, [settings]);
 
   const handleRefresh = useCallback(() => { void refresh(); }, [refresh]);
   const handleUpdateSettings = useCallback(
@@ -970,8 +959,10 @@ export default function App() {
   );
 
   const handleToggleTheme = useCallback(() => {
-    setUiTheme((prev) => (prev === "dark" ? "light" : "dark"));
-  }, []);
+    const nextTheme = uiTheme === "dark" ? "light" : "dark";
+    setUiTheme(nextTheme);
+    void updateSettings({ theme: nextTheme });
+  }, [uiTheme, updateSettings]);
 
   const handleClose = useCallback(() => {
     if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {

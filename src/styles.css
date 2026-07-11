@@ -9,9 +9,9 @@
   --brand-primary: #2866F7;
   --brand-primary-strong: #1F59ED;
   --brand-primary-light: #7BA0FF;
-  --brand-secondary: #8B6DFF;
-  --brand-secondary-strong: #6D45E8;
-  --brand-highlight: #DAA3FA;
+  --brand-secondary: #6E7FF2;
+  --brand-secondary-strong: #5368D8;
+  --brand-highlight: #8EC5FF;
   --brand-gradient: linear-gradient(135deg, var(--brand-primary-light), var(--brand-primary));
   --brand-secondary-gradient: linear-gradient(135deg, var(--brand-highlight), var(--brand-secondary));
 
@@ -24,26 +24,32 @@
 
   /* Data colors */
   --data-input: #0A84FF;
-  --data-cached: #8B6DFF;
+  --data-cached: #6E7FF2;
   --data-output: #FF9F0A;
-  --data-reasoning: #BF5AF2;
+  --data-reasoning: #38BDF8;
   --data-zero: rgba(152, 152, 157, 0.35);
 
   /* Surface / Glass (dark mode defaults) */
-  --surface-window-bg: rgba(80, 50, 162, 0.62);
-  --surface-section-bg: rgba(255, 255, 255, 0.15);
-  --surface-section-border: rgba(255, 255, 255, 0.18);
-  --surface-section-tint: rgba(255, 255, 255, 0.05);
-  --surface-card-bg: rgba(255, 255, 255, 0.22);
-  --surface-card-border: rgba(255, 255, 255, 0.2);
-  --surface-card-elevated-bg: rgba(255, 255, 255, 0.18);
-  --surface-card-elevated-border: rgba(255, 255, 255, 0.15);
-  --surface-control-bg: rgba(255, 255, 255, 0.12);
-  --surface-control-border: rgba(255, 255, 255, 0.10);
-  --surface-control-hover: rgba(255, 255, 255, 0.16);
-  --surface-control-active: rgba(255, 255, 255, 0.22);
-  --surface-control-selected: rgba(255, 255, 255, 0.20);
-  --surface-track: rgba(255, 255, 255, 0.14);
+  --surface-window-bg: rgba(24, 24, 27, 0.22);
+  --surface-window-sheen: rgba(255, 255, 255, 0.018);
+  --surface-section-bg: rgba(32, 32, 35, 0.34);
+  --surface-section-border: rgba(255, 255, 255, 0.12);
+  --surface-section-tint: rgba(255, 255, 255, 0.025);
+  --surface-card-bg: rgba(55, 55, 60, 0.38);
+  --surface-card-border: rgba(255, 255, 255, 0.11);
+  --surface-card-elevated-bg: rgba(62, 62, 67, 0.44);
+  --surface-card-elevated-border: rgba(255, 255, 255, 0.12);
+  --surface-control-bg: rgba(255, 255, 255, 0.09);
+  --surface-control-border: rgba(255, 255, 255, 0.11);
+  --surface-control-hover: rgba(255, 255, 255, 0.14);
+  --surface-control-active: rgba(255, 255, 255, 0.19);
+  --surface-control-selected: rgba(255, 255, 255, 0.17);
+  --surface-track: rgba(255, 255, 255, 0.13);
+  --surface-highlight: rgba(255, 255, 255, 0.07);
+  --surface-subtle-bg: rgba(255, 255, 255, 0.035);
+  --surface-subtle-border: rgba(255, 255, 255, 0.06);
+  --surface-modal-bg: rgba(32, 32, 35, 0.90);
+  --surface-option-bg: #252528;
 
   /* Text (dark mode) */
   --text-primary: rgba(255, 255, 255, 0.92);
@@ -85,16 +91,33 @@
   --ease-in-out: 0.28s ease-in-out;
 }
 
+html[data-platform="windows"] {
+  /* DWM clips the Acrylic surface; a second CSS radius creates a double edge. */
+  --window-corner-radius: 0px;
+}
+
 /* ---- Light Theme Overrides ---- */
 [data-theme="light"] {
-  --surface-window-bg: rgba(255, 255, 255, 0.55);
-  --surface-section-bg: rgba(255, 255, 255, 0.50);
-  --surface-section-border: rgba(0, 0, 0, 0.08);
-  --surface-card-bg: rgba(255, 255, 255, 0.60);
-  --surface-card-border: rgba(0, 0, 0, 0.07);
-  --surface-control-bg: rgba(255, 255, 255, 0.55);
-  --surface-control-border: rgba(0, 0, 0, 0.06);
+  --surface-window-bg: rgba(246, 247, 249, 0.20);
+  --surface-window-sheen: rgba(255, 255, 255, 0.06);
+  --surface-section-bg: rgba(248, 249, 250, 0.38);
+  --surface-section-border: rgba(255, 255, 255, 0.48);
+  --surface-section-tint: rgba(255, 255, 255, 0.10);
+  --surface-card-bg: rgba(255, 255, 255, 0.50);
+  --surface-card-border: rgba(255, 255, 255, 0.56);
+  --surface-card-elevated-bg: rgba(255, 255, 255, 0.58);
+  --surface-card-elevated-border: rgba(255, 255, 255, 0.62);
+  --surface-control-bg: rgba(255, 255, 255, 0.34);
+  --surface-control-border: rgba(31, 35, 40, 0.08);
+  --surface-control-hover: rgba(255, 255, 255, 0.48);
+  --surface-control-active: rgba(255, 255, 255, 0.62);
+  --surface-control-selected: rgba(255, 255, 255, 0.56);
   --surface-track: rgba(0, 0, 0, 0.12);
+  --surface-highlight: rgba(255, 255, 255, 0.58);
+  --surface-subtle-bg: rgba(255, 255, 255, 0.22);
+  --surface-subtle-border: rgba(31, 35, 40, 0.06);
+  --surface-modal-bg: rgba(246, 247, 249, 0.92);
+  --surface-option-bg: #f1f2f4;
 
   --text-primary: rgba(0, 0, 0, 0.88);
   --text-secondary: rgba(0, 0, 0, 0.55);
@@ -152,7 +175,7 @@ body {
   content: "";
   position: absolute;
   inset: 0;
-  background: rgba(205, 170, 255, 0.08);
+  background: var(--surface-window-sheen);
   z-index: -1;
   border-radius: var(--window-corner-radius);
   pointer-events: none;
@@ -183,6 +206,7 @@ select, input {
   display: grid;
   grid-template-rows: var(--titlebar-height) minmax(0, 1fr) 26px;
   height: 100%;
+  color: var(--text-primary);
   border-radius: var(--window-corner-radius);
   overflow: hidden;
   backdrop-filter: blur(40px) saturate(1.8);
@@ -228,7 +252,7 @@ select, input {
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #7BA0FF 0%, #2866F7 50%, #8B6DFF 100%);
+  background: var(--brand-primary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -336,7 +360,7 @@ select, input {
   border-radius: 7px;
   font-size: 11px;
   font-weight: 700;
-  background: linear-gradient(135deg, #DAA3FA, #8B6DFF);
+  background: var(--brand-primary);
   color: white;
   letter-spacing: 0.02em;
 }
@@ -415,6 +439,7 @@ select, input {
   border-radius: var(--radius-xl);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+  box-shadow: inset 0 1px var(--surface-highlight), var(--shadow-section);
 }
 
 /* ========================================================
@@ -463,7 +488,7 @@ select, input {
 
 .quota-rings .ring-track {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.12);
+  stroke: var(--surface-track);
 }
 
 .quota-rings .ring-fill {
@@ -589,6 +614,7 @@ select, input {
   overflow: hidden;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
+  box-shadow: inset 0 1px var(--surface-highlight), var(--shadow-card);
 }
 
 .token-card-header {
@@ -700,6 +726,7 @@ select, input {
   overflow: hidden;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
+  box-shadow: inset 0 1px var(--surface-highlight), var(--shadow-card);
 }
 
 .wool-progress-header {
@@ -752,7 +779,7 @@ select, input {
 .wool-progress-fill {
   height: 12px;
   border-radius: 6px;
-  background: linear-gradient(90deg, #7BA0FF 0%, #2866F7 40%, #8B6DFF 70%, #DAA3FA 100%);
+  background: linear-gradient(90deg, #7BA0FF 0%, #2866F7 55%, #56B4D3 100%);
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
@@ -904,10 +931,10 @@ select, input {
   flex-direction: column;
   gap: 8px;
   min-width: 0;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-subtle-bg);
   border-radius: 12px;
   padding: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--surface-subtle-border);
 }
 
 .kanban-column-header {
@@ -938,7 +965,7 @@ select, input {
 
 .kanban-column-dot.active { background: var(--status-info); box-shadow: 0 0 6px rgba(10, 132, 255, 0.5); }
 .kanban-column-dot.pending { background: var(--status-warning); box-shadow: 0 0 6px rgba(255, 159, 10, 0.5); }
-.kanban-column-dot.scheduled { background: var(--brand-secondary); box-shadow: 0 0 6px rgba(139, 109, 255, 0.5); }
+.kanban-column-dot.scheduled { background: var(--brand-secondary); box-shadow: 0 0 6px rgba(110, 127, 242, 0.5); }
 .kanban-column-dot.done { background: var(--status-success); box-shadow: 0 0 6px rgba(48, 209, 88, 0.5); }
 
 .kanban-column-more {
@@ -1062,7 +1089,7 @@ select, input {
 }
 
 .kanban-item-badge.cron {
-  background: rgba(139, 109, 255, 0.18);
+  background: rgba(110, 127, 242, 0.18);
   color: var(--brand-secondary);
 }
 
@@ -1357,7 +1384,7 @@ select, input {
   gap: 5px;
   padding: 8px 9px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-subtle-bg);
   font-size: 11px;
 }
 
@@ -1463,8 +1490,8 @@ select, input {
   width: min(440px, calc(100vw - 40px));
   max-height: min(640px, calc(100vh - 60px));
   overflow-y: auto;
-  background: rgba(30, 25, 60, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--surface-modal-bg);
+  border: 1px solid var(--surface-section-border);
   border-radius: var(--radius-2xl);
   box-shadow: var(--shadow-popover);
   backdrop-filter: blur(30px) saturate(1.6);
@@ -1510,7 +1537,7 @@ select, input {
 }
 
 .settings-field option {
-  background: #1a1530;
+  background: var(--surface-option-bg);
   color: var(--text-primary);
 }
 

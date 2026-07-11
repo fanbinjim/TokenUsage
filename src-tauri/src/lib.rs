@@ -1,6 +1,6 @@
 use std::{sync::Mutex, time::Duration};
 
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, Theme, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri::window::Color;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -10,6 +10,7 @@ use tokenusage_core::{AppSettings, DataPaths, MultiRuntimeUsageSnapshot, Setting
 use windows::{
     Win32::{
         Foundation::RECT,
+        Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND},
         UI::WindowsAndMessaging::{
             FindWindowW, GA_PARENT, GetAncestor, GetWindowRect, SWP_NOACTIVATE, SWP_NOZORDER,
             SWP_SHOWWINDOW, SetParent, SetWindowPos,
@@ -76,6 +77,7 @@ fn save_settings(app: AppHandle, state: State<'_, AppState>, patch: SettingsPatc
 
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_always_on_top(updated.keep_main_window_on_top);
+        sync_main_window_appearance(&window, &updated.theme);
     }
     sync_taskbar_widget(&app, &updated);
     let _ = app.emit("tokenusage://settings-updated", &updated);
@@ -90,6 +92,33 @@ fn store_and_publish_snapshot(
     *state.snapshot.lock().map_err(|_| "Usage snapshot is unavailable.")? = Some(snapshot.clone());
     let _ = app.emit("tokenusage://snapshot", snapshot);
     Ok(())
+}
+
+fn sync_main_window_appearance(window: &WebviewWindow, theme: &str) {
+    let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
+    let native_theme = match theme {
+        "light" => Some(Theme::Light),
+        "dark" => Some(Theme::Dark),
+        _ => None,
+    };
+    let _ = window.set_theme(native_theme);
+
+    #[cfg(target_os = "windows")]
+    {
+        // Acrylic supplies the desktop blur; React provides the readable tint.
+        let _ = window_vibrancy::apply_acrylic(window, None);
+        if let Ok(hwnd) = window.hwnd() {
+            let corner_preference = DWMWCP_ROUND;
+            let _ = unsafe {
+                DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_WINDOW_CORNER_PREFERENCE,
+                    &corner_preference as *const _ as _,
+                    std::mem::size_of_val(&corner_preference) as u32,
+                )
+            };
+        }
+    }
 }
 
 pub fn run() {
@@ -121,9 +150,12 @@ pub fn run() {
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_decorations(false);
-                // WebView2 only supports either opaque or fully transparent alpha on Windows.
-                // Keep the native surface transparent and let the React glass layers supply tint.
-                let _ = window.set_background_color(Some(Color(0, 0, 0, 0)));
+                let theme = app.state::<AppState>()
+                    .settings
+                    .lock()
+                    .map(|settings| settings.theme.clone())
+                    .unwrap_or_else(|_| "system".into());
+                sync_main_window_appearance(&window, &theme);
                 let _ = window.show();
                 let _ = window.set_focus();
             }

@@ -14,4 +14,17 @@ describe("dashboard privacy and layout guards", () => {
     expect(source).not.toContain("diagnostics-panel");
     expect(source).not.toContain("数据诊断");
   });
+  it("does not duplicate token breakdown cards in the trends tab", () => {
+    const source = readFileSync(resolve(process.cwd(), "src", "App.tsx"), "utf8");
+    expect(source).not.toContain("Token 拆分（今日）");
+    expect(source).not.toContain("Token 拆分（近 7 天）");
+  });
+
+  it("keeps the glass surfaces neutral in light and dark themes", () => {
+    const styles = readFileSync(resolve(process.cwd(), "src", "styles.css"), "utf8");
+    expect(styles).toContain("--surface-window-bg: rgba(24, 24, 27, 0.22)");
+    expect(styles).toContain("--surface-window-bg: rgba(246, 247, 249, 0.20)");
+    expect(styles).toContain('html[data-platform="windows"]');
+    expect(styles).not.toContain("rgba(80, 50, 162");
+  });
 });
