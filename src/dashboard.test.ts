@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { safeThreadLabel, shortCwd, taskCardId, WOOL_MONTHLY_VALUE_CAP, woolProgressPercent } from "./App";
+import { dashboardQuotaPercent, safeThreadLabel, shortCwd, taskCardId, WOOL_MONTHLY_VALUE_CAP, woolProgressPercent } from "./App";
 
 describe("dashboard display and layout guards", () => {
   it("uses the local thread title and a project alias", () => {
@@ -38,5 +38,13 @@ describe("dashboard display and layout guards", () => {
     expect(woolProgressPercent(200)).toBe(30);
     expect(woolProgressPercent(WOOL_MONTHLY_VALUE_CAP)).toBe(100);
     expect(woolProgressPercent(WOOL_MONTHLY_VALUE_CAP * 2)).toBe(100);
+  });
+
+  it("uses full remaining quota when the main dashboard has no valid quota", () => {
+    expect(dashboardQuotaPercent(null)).toBe(100);
+    expect(dashboardQuotaPercent({ usedPercent: 0, remainingPercent: Number.NaN, windowDurationMins: 300, resetsAt: null })).toBe(100);
+    expect(dashboardQuotaPercent({ usedPercent: 0, remainingPercent: -1, windowDurationMins: 300, resetsAt: null })).toBe(100);
+    expect(dashboardQuotaPercent({ usedPercent: 0, remainingPercent: 101, windowDurationMins: 300, resetsAt: null })).toBe(100);
+    expect(dashboardQuotaPercent({ usedPercent: 42, remainingPercent: 58.4, windowDurationMins: 300, resetsAt: null })).toBe(58);
   });
 });

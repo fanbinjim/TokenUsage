@@ -41,9 +41,28 @@ export function taskbarQuotaValues(
 ): TaskbarQuotaValues {
   const runtime = snapshot?.runtimes.find((item) => item.scope === selectedScope) ?? snapshot?.runtimes[0];
   return {
-    fiveHour: validRemainingPercent(runtime?.snapshot.primary),
-    sevenDay: validRemainingPercent(runtime?.snapshot.secondary),
+    fiveHour: validRemainingPercent(runtime?.snapshot.primary) ?? 100,
+    sevenDay: validRemainingPercent(runtime?.snapshot.secondary) ?? 100,
     fiveHourWindow: runtime?.snapshot.primary ?? null,
+  };
+}
+
+export function taskbarFallbackResetWindow(nowMs = Date.now()): RateWindow {
+  const now = new Date(nowMs);
+  const nextReset = new Date(nowMs);
+  nextReset.setMinutes(0, 0, 0);
+  if (now.getHours() < 12) {
+    nextReset.setHours(12);
+  } else {
+    nextReset.setDate(nextReset.getDate() + 1);
+    nextReset.setHours(0);
+  }
+
+  return {
+    usedPercent: 0,
+    remainingPercent: 100,
+    windowDurationMins: 12 * 60,
+    resetsAt: nextReset.toISOString(),
   };
 }
 
@@ -71,11 +90,8 @@ export function taskbarResetCountdown(
   const hours = Math.floor(remainingMinutes / 60);
   const minutes = remainingMinutes % 60;
   const label = hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}` : `${remainingMinutes}m`;
-  const resetTime = new Date(resetMs).toLocaleTimeString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  const resetDate = new Date(resetMs);
+  const resetTime = `${String(resetDate.getHours()).padStart(2, "0")}:${String(resetDate.getMinutes()).padStart(2, "0")}`;
 
   return {
     label,
@@ -108,7 +124,8 @@ function QuotaRow({ label, percent, tone }: {
 }
 
 function ResetCountdown({ window, nowMs }: { window: RateWindow | null; nowMs: number }) {
-  const countdown = taskbarResetCountdown(window, nowMs);
+  const resetWindow = window?.resetsAt ? window : taskbarFallbackResetWindow(nowMs);
+  const countdown = taskbarResetCountdown(resetWindow, nowMs);
   const progress = countdown ? countdown.progress * 100 : 0;
   const tooltip = countdown
     ? `5h 额度将在 ${countdown.resetTime} 重置，剩余 ${countdown.label}`
@@ -172,10 +189,9 @@ export default function TaskbarWidget({ preview }: { preview?: TaskbarWidgetPrev
   }, [preview, setSettings, setSnapshot]);
   useEffect(() => {
     setNowMs(Date.now());
-    if (!quota.fiveHourWindow?.resetsAt) return undefined;
     const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
     return () => window.clearInterval(timer);
-  }, [quota.fiveHourWindow?.resetsAt]);
+  }, []);
 
   return (
     <div

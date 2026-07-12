@@ -228,6 +228,14 @@ const IconClock = () => (
    DualQuotaRing
    ======================================================== */
 
+export function dashboardQuotaPercent(window: RateWindow | null | undefined): number {
+  const percent = window?.remainingPercent;
+  if (typeof percent !== "number" || !Number.isFinite(percent) || percent < 0 || percent > 100) {
+    return 100;
+  }
+  return Math.round(percent);
+}
+
 function DualQuotaRing({ primary, secondary }: { primary: RateWindow | null; secondary: RateWindow | null }) {
   const size = 160;
   const cx = size / 2;
@@ -236,13 +244,12 @@ function DualQuotaRing({ primary, secondary }: { primary: RateWindow | null; sec
   const innerR = 42;
   const strokeW = 14;
 
-  const outerFrac = primary ? Math.max(0, Math.min(1, primary.remainingPercent / 100)) : 0;
-  const innerFrac = secondary ? Math.max(0, Math.min(1, secondary.remainingPercent / 100)) : 0;
+  const outerPct = dashboardQuotaPercent(primary);
+  const innerPct = dashboardQuotaPercent(secondary);
+  const outerFrac = outerPct / 100;
+  const innerFrac = innerPct / 100;
   const outerCirc = 2 * Math.PI * outerR;
   const innerCirc = 2 * Math.PI * innerR;
-
-  const outerPct = primary ? Math.round(primary.remainingPercent) : null;
-  const innerPct = secondary ? Math.round(secondary.remainingPercent) : null;
 
   return (
     <div className="quota-rings">
@@ -281,13 +288,13 @@ function DualQuotaRing({ primary, secondary }: { primary: RateWindow | null; sec
         )}
       </svg>
       <div className="quota-rings-center">
-        <div className="ring-label primary" aria-label={`5 hours ${outerPct != null ? `${outerPct}% remaining` : "unavailable"}`}>
+        <div className="ring-label primary" aria-label={`5 hours ${outerPct}% remaining`}>
           <span className="tag">5h</span>
-          <span className="pct">{outerPct != null ? `${outerPct}%` : "--"}</span>
+          <span className="pct">{outerPct}%</span>
         </div>
-        <div className="ring-label secondary" aria-label={`7 days ${innerPct != null ? `${innerPct}% remaining` : "unavailable"}`}>
+        <div className="ring-label secondary" aria-label={`7 days ${innerPct}% remaining`}>
           <span className="tag">7d</span>
-          <span className="pct">{innerPct != null ? `${innerPct}%` : "--"}</span>
+          <span className="pct">{innerPct}%</span>
         </div>
         <div className="remaining-label">剩余</div>
       </div>
@@ -957,7 +964,7 @@ function SettingsModal({
             <input type="checkbox" checked={settings.taskbarWidgetEnabled} onChange={(e) => onUpdate({ taskbarWidgetEnabled: e.target.checked })} />
           </div>
           <div className="settings-field">
-            <label>任务栏距右侧偏移（像素）</label>
+            <label>距隐藏图标按钮左侧偏移（像素）</label>
             <input
               type="number"
               min="0"

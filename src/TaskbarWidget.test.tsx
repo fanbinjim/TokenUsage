@@ -3,17 +3,18 @@ import { describe, expect, it } from "vitest";
 import TaskbarWidget, {
   taskbarQuotaLevel,
   taskbarQuotaValues,
+  taskbarFallbackResetWindow,
   taskbarResetCountdown,
   taskbarResetLevel,
 } from "./TaskbarWidget";
 import type { MultiRuntimeUsageSnapshot } from "./types";
 
 describe("taskbar quota", () => {
-  it("renders unavailable placeholders until a live snapshot is available", () => {
+  it("renders full quota fallbacks until a live snapshot is available", () => {
     const markup = renderToStaticMarkup(<TaskbarWidget />);
-    expect(markup).toContain("--");
-    expect(markup).toContain("scaleX(0)");
-    expect(markup.match(/quota-unavailable/g)).toHaveLength(2);
+    expect(markup.match(/class="taskbar-widget-value">100%<\/span>/g)).toHaveLength(2);
+    expect(markup.match(/scaleX\(1\)/g)).toHaveLength(2);
+    expect(markup).not.toContain("quota-unavailable");
   });
 
   it("uses the selected runtime's live remaining quota", () => {
@@ -60,7 +61,7 @@ describe("taskbar quota", () => {
     expect(taskbarQuotaValues(snapshot, "codex")).toMatchObject({ fiveHour: 65, sevenDay: 83 });
   });
 
-  it("does not turn missing quota into a fake zero", () => {
+  it("uses full quota values when quota data is missing", () => {
     const snapshot: MultiRuntimeUsageSnapshot = {
       schemaVersion: 1,
       refreshedAt: "2026-07-12T12:00:00Z",
@@ -82,7 +83,24 @@ describe("taskbar quota", () => {
       }],
     };
 
-    expect(taskbarQuotaValues(snapshot, "codex")).toEqual({ fiveHour: null, sevenDay: null, fiveHourWindow: null });
+    expect(taskbarQuotaValues(snapshot, "codex")).toEqual({ fiveHour: 100, sevenDay: 100, fiveHourWindow: null });
+  });
+
+  it("falls back to the next local noon or midnight reset", () => {
+    const morning = new Date(2026, 6, 12, 8, 15, 0).getTime();
+    const morningReset = taskbarFallbackResetWindow(morning);
+    expect(morningReset.windowDurationMins).toBe(720);
+    expect(morningReset.remainingPercent).toBe(100);
+    expect(new Date(morningReset.resetsAt!)).toEqual(new Date(2026, 6, 12, 12, 0, 0));
+    expect(taskbarResetCountdown(morningReset, morning)?.resetTime).toBe("12:00");
+
+    const afternoon = new Date(2026, 6, 12, 17, 30, 0).getTime();
+    const afternoonReset = taskbarFallbackResetWindow(afternoon);
+    expect(new Date(afternoonReset.resetsAt!)).toEqual(new Date(2026, 6, 13, 0, 0, 0));
+    expect(taskbarResetCountdown(afternoonReset, afternoon)?.resetTime).toBe("00:00");
+
+    const noon = new Date(2026, 6, 12, 12, 0, 0).getTime();
+    expect(new Date(taskbarFallbackResetWindow(noon).resetsAt!)).toEqual(new Date(2026, 6, 13, 0, 0, 0));
   });
 
   it("maps quota percentages to non-overlapping warning ranges", () => {

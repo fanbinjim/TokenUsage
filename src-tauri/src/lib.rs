@@ -8,8 +8,8 @@ use tauri::{
     WebviewWindow, WebviewWindowBuilder,
 };
 use tokenusage_core::{
-    AppSettings, DataPaths, MultiRuntimeUsageSnapshot, SettingsPatch, SettingsStore,
-    load_multi_runtime,
+    APP_SETTINGS_SCHEMA_VERSION, AppSettings, DataPaths, MultiRuntimeUsageSnapshot, SettingsPatch,
+    SettingsStore, load_multi_runtime,
 };
 
 #[cfg(target_os = "windows")]
@@ -18,12 +18,11 @@ use windows::{
         Foundation::RECT,
         Graphics::Dwm::{DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute},
         UI::WindowsAndMessaging::{
-            FindWindowW, GA_PARENT, GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GWLP_HWNDPARENT,
-            GetAncestor, GetWindow, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST,
-            SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+            FindWindowExW, FindWindowW, GA_PARENT, GW_OWNER, GWL_EXSTYLE, GWL_STYLE,
+            GWLP_HWNDPARENT, GetAncestor, GetWindow, GetWindowLongPtrW, GetWindowRect,
+            HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
             SWP_SHOWWINDOW, SetParent, SetWindowLongPtrW, SetWindowPos, WS_CAPTION, WS_CHILD,
-            WS_EX_TRANSPARENT, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU,
-            WS_THICKFRAME,
+            WS_EX_TRANSPARENT, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
         },
     },
     core::{PCWSTR, w},
@@ -38,6 +37,7 @@ const TASKBAR_WIDGET_LABEL: &str = "taskbar-widget";
 const TASKBAR_INPUT_PROXY_LABEL: &str = "taskbar-input-proxy";
 const TASKBAR_WIDGET_WIDTH: f64 = 184.0;
 const TASKBAR_WIDGET_VERTICAL_MARGIN: f64 = 3.0;
+const TASKBAR_NOTIFICATION_FALLBACK_WIDTH: f64 = 320.0;
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -222,6 +222,7 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            migrate_taskbar_anchor_settings(app);
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_decorations(false);
                 let theme = app
@@ -237,6 +238,7 @@ pub fn run() {
             create_taskbar_widget(app)?;
             create_taskbar_input_proxy(app)?;
             start_usage_refresh_loop(app.handle().clone());
+            start_taskbar_position_loop(app.handle().clone());
             let open = MenuItem::with_id(app, "open", "Open TokenUsage", true, None::<&str>)?;
             let refresh = MenuItem::with_id(app, "refresh", "Refresh", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
@@ -306,6 +308,121 @@ fn start_usage_refresh_loop(app: AppHandle) {
 }
 
 #[cfg(target_os = "windows")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TaskbarLayoutSignature {
+    taskbar_rect: [i32; 4],
+    notification_rect: Option<[i32; 4]>,
+    manual_offset: u32,
+    enabled: bool,
+}
+
+#[cfg(target_os = "windows")]
+fn window_rect(hwnd: windows::Win32::Foundation::HWND) -> Option<RECT> {
+    let mut rect = RECT::default();
+    unsafe { GetWindowRect(hwnd, &mut rect) }.ok()?;
+    Some(rect)
+}
+
+#[cfg(target_os = "windows")]
+fn rect_signature(rect: RECT) -> [i32; 4] {
+    [rect.left, rect.top, rect.right, rect.bottom]
+}
+
+#[cfg(target_os = "windows")]
+fn current_taskbar_layout_signature(settings: &AppSettings) -> Option<TaskbarLayoutSignature> {
+    let taskbar = taskbar_handle()?;
+    let taskbar_rect = window_rect(taskbar)?;
+    let notification_rect = taskbar_notification_rect(taskbar).map(rect_signature);
+    Some(TaskbarLayoutSignature {
+        taskbar_rect: rect_signature(taskbar_rect),
+        notification_rect,
+        manual_offset: settings.taskbar_widget_right_offset,
+        enabled: settings.taskbar_widget_enabled,
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn start_taskbar_position_loop(app: AppHandle) {
+    std::thread::spawn(move || {
+        let mut previous = None;
+        loop {
+            std::thread::sleep(Duration::from_millis(500));
+            let Some(state) = app.try_state::<AppState>() else {
+                return;
+            };
+            let Ok(settings) = state.settings.lock().map(|settings| settings.clone()) else {
+                continue;
+            };
+            let current = current_taskbar_layout_signature(&settings);
+            if current != previous {
+                sync_taskbar_widget(&app, &settings);
+                previous = current;
+            }
+        }
+    });
+}
+
+#[cfg(not(target_os = "windows"))]
+fn start_taskbar_position_loop(_app: AppHandle) {}
+
+#[cfg(target_os = "windows")]
+fn anchored_offset_from_legacy(legacy_offset: u32, notification_width: i32, scale: f64) -> u32 {
+    if !scale.is_finite() || scale <= 0.0 {
+        return 0;
+    }
+    let legacy_physical = (legacy_offset as f64 * scale).round() as i32;
+    let anchored_physical = legacy_physical.saturating_sub(notification_width).max(0);
+    ((anchored_physical as f64 / scale).round() as u32).min(3000)
+}
+
+#[cfg(target_os = "windows")]
+fn migrate_taskbar_anchor_settings(app: &tauri::App) {
+    let state = app.state::<AppState>();
+    let Ok(mut settings) = state.settings.lock() else {
+        return;
+    };
+    if settings.schema_version >= APP_SETTINGS_SCHEMA_VERSION {
+        return;
+    }
+
+    let scale = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| monitor.scale_factor())
+        .unwrap_or(1.0);
+    let notification_width = taskbar_handle()
+        .and_then(taskbar_notification_rect)
+        .map(|rect| rect.right.saturating_sub(rect.left))
+        .unwrap_or(0);
+    settings.taskbar_widget_right_offset = anchored_offset_from_legacy(
+        settings.taskbar_widget_right_offset,
+        notification_width,
+        scale,
+    );
+    settings.schema_version = APP_SETTINGS_SCHEMA_VERSION;
+    let updated = settings.clone();
+    drop(settings);
+    let _ = config_store(&updated).save(&updated);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn migrate_taskbar_anchor_settings(app: &tauri::App) {
+    let state = app.state::<AppState>();
+    let Ok(mut settings) = state.settings.lock() else {
+        return;
+    };
+    if settings.schema_version >= APP_SETTINGS_SCHEMA_VERSION {
+        return;
+    }
+    settings.schema_version = APP_SETTINGS_SCHEMA_VERSION;
+    settings.taskbar_widget_right_offset = 0;
+    let updated = settings.clone();
+    drop(settings);
+    let _ = config_store(&updated).save(&updated);
+}
+
+#[cfg(target_os = "windows")]
 fn create_taskbar_widget(app: &tauri::App) -> tauri::Result<()> {
     if app.get_webview_window(TASKBAR_WIDGET_LABEL).is_some() {
         return Ok(());
@@ -345,10 +462,7 @@ fn create_taskbar_widget(app: &tauri::App) -> tauri::Result<()> {
 
 #[cfg(target_os = "windows")]
 fn create_taskbar_input_proxy(app: &tauri::App) -> tauri::Result<()> {
-    if app
-        .get_webview_window(TASKBAR_INPUT_PROXY_LABEL)
-        .is_some()
-    {
+    if app.get_webview_window(TASKBAR_INPUT_PROXY_LABEL).is_some() {
         return Ok(());
     }
 
@@ -428,6 +542,38 @@ fn sync_taskbar_widget(_app: &AppHandle, _settings: &AppSettings) {}
 #[cfg(target_os = "windows")]
 fn taskbar_handle() -> Option<windows::Win32::Foundation::HWND> {
     unsafe { FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()).ok() }
+}
+
+#[cfg(target_os = "windows")]
+fn taskbar_notification_rect(taskbar: windows::Win32::Foundation::HWND) -> Option<RECT> {
+    let notification =
+        unsafe { FindWindowExW(Some(taskbar), None, w!("TrayNotifyWnd"), PCWSTR::null()).ok()? };
+    let rect = window_rect(notification)?;
+    (rect.right > rect.left && rect.bottom > rect.top).then_some(rect)
+}
+
+#[cfg(target_os = "windows")]
+fn taskbar_anchor_screen_left(
+    taskbar: windows::Win32::Foundation::HWND,
+    taskbar_rect: RECT,
+    scale_factor: f64,
+) -> i32 {
+    taskbar_notification_rect(taskbar)
+        .map(|rect| rect.left)
+        .filter(|left| *left >= taskbar_rect.left && *left <= taskbar_rect.right)
+        .unwrap_or_else(|| {
+            let fallback_width =
+                (TASKBAR_NOTIFICATION_FALLBACK_WIDTH * scale_factor).round() as i32;
+            taskbar_rect.right.saturating_sub(fallback_width)
+        })
+}
+
+#[cfg(target_os = "windows")]
+fn taskbar_widget_left(anchor_left: i32, width: i32, manual_offset: i32, minimum: i32) -> i32 {
+    anchor_left
+        .saturating_sub(manual_offset)
+        .saturating_sub(width)
+        .max(minimum)
 }
 
 #[cfg(target_os = "windows")]
@@ -603,10 +749,15 @@ fn position_top_level_taskbar_window(
         return false;
     }
     let offset = (right_offset as f64 * scale_factor).round() as i32;
-    let x = screen_right
-        .saturating_sub(offset)
-        .saturating_sub(width as i32)
-        .max(screen_left);
+    let anchor_left = taskbar_handle()
+        .and_then(|taskbar| window_rect(taskbar).map(|rect| (taskbar, rect)))
+        .map(|(taskbar, rect)| taskbar_anchor_screen_left(taskbar, rect, scale_factor))
+        .unwrap_or_else(|| {
+            let fallback_width =
+                (TASKBAR_NOTIFICATION_FALLBACK_WIDTH * scale_factor).round() as i32;
+            screen_right.saturating_sub(fallback_width)
+        });
+    let x = taskbar_widget_left(anchor_left, width as i32, offset, screen_left);
     let y = taskbar_top.saturating_add(margin);
 
     window.set_size(PhysicalSize::new(width, height)).is_ok()
@@ -640,10 +791,9 @@ fn position_embedded_taskbar_widget(
     let width = (TASKBAR_WIDGET_WIDTH * scale_factor).round() as i32;
     let height = taskbar_height.saturating_sub(margin.saturating_mul(2));
     let offset = (right_offset as f64 * scale_factor).round() as i32;
-    let x = taskbar_width
-        .saturating_sub(offset)
-        .saturating_sub(width)
-        .max(0);
+    let anchor_left = taskbar_anchor_screen_left(taskbar, taskbar_rect, scale_factor)
+        .saturating_sub(taskbar_rect.left);
+    let x = taskbar_widget_left(anchor_left, width, offset, 0);
     if width <= 0 || height <= 0 {
         return false;
     }
@@ -690,6 +840,23 @@ mod taskbar_widget_tests {
         let style = taskbar_widget_interactive_ex_style(WS_EX_TRANSPARENT.0 as isize);
 
         assert_eq!(style & WS_EX_TRANSPARENT.0 as isize, 0);
+    }
+
+    #[test]
+    fn taskbar_widget_position_tracks_the_notification_anchor() {
+        let first = taskbar_widget_left(1_994, 184, 282, 0);
+        let after_icon_change = taskbar_widget_left(1_946, 184, 282, 0);
+
+        assert_eq!(first, 1_528);
+        assert_eq!(after_icon_change, 1_480);
+        assert_eq!(after_icon_change - first, -48);
+    }
+
+    #[test]
+    fn legacy_right_edge_offset_is_migrated_without_moving_the_widget() {
+        assert_eq!(anchored_offset_from_legacy(848, 566, 1.0), 282);
+        assert_eq!(anchored_offset_from_legacy(848, 849, 1.5), 282);
+        assert_eq!(anchored_offset_from_legacy(200, 566, 1.0), 0);
     }
 }
 

@@ -6,6 +6,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub const APP_SETTINGS_SCHEMA_VERSION: u32 = 2;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
@@ -31,7 +33,7 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            schema_version: 1,
+            schema_version: APP_SETTINGS_SCHEMA_VERSION,
             language: "auto".into(),
             theme: "system".into(),
             selected_runtime: RuntimeScope::Codex,
@@ -41,7 +43,7 @@ impl Default for AppSettings {
             keep_running_when_main_window_closed: true,
             keep_main_window_on_top: false,
             taskbar_widget_enabled: true,
-            taskbar_widget_right_offset: 1050,
+            taskbar_widget_right_offset: 0,
             automatic_update_checks_enabled: true,
             receive_prereleases: false,
             codex_executable_path: None,
@@ -200,7 +202,8 @@ mod tests {
         let settings: AppSettings =
             serde_json::from_str(r#"{"theme":"light"}"#).expect("legacy settings parse");
         assert!(settings.taskbar_widget_enabled);
-        assert_eq!(settings.taskbar_widget_right_offset, 1050);
+        assert_eq!(settings.schema_version, APP_SETTINGS_SCHEMA_VERSION);
+        assert_eq!(settings.taskbar_widget_right_offset, 0);
     }
 
     #[test]
