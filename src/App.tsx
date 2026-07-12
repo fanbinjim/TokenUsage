@@ -15,6 +15,8 @@ import type {
   TokenBreakdown,
 } from "./types";
 
+const appIconUrl = new URL("../src-tauri/icons/icon.png", import.meta.url).href;
+
 /* ========================================================
    Helpers
    ======================================================== */
@@ -458,7 +460,7 @@ function TitleBar({
     <header className="titlebar" data-tauri-drag-region>
       <div className="titlebar-left" data-tauri-drag-region="false">
         <div className="titlebar-brand">
-          <div className="titlebar-brand-icon">U</div>
+          <img className="titlebar-brand-icon" src={appIconUrl} alt="" />
           <span>TokenUsage</span>
         </div>
       </div>

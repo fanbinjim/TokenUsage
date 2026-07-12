@@ -251,15 +251,9 @@ select, input {
 .titlebar-brand-icon {
   width: 30px;
   height: 30px;
-  border-radius: 8px;
-  background: var(--brand-primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  color: white;
-  font-weight: 700;
-  box-shadow: 0 2px 8px rgba(40, 102, 247, 0.4);
+  display: block;
+  flex: none;
+  object-fit: contain;
 }
 
 .titlebar-center {
