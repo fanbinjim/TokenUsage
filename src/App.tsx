@@ -19,8 +19,20 @@ import type {
    ======================================================== */
 
 export function safeThreadLabel(thread: LocalThread): string {
+  const title = thread.title.trim().replace(/\s+/g, " ");
+  if (title) return title;
   const suffix = thread.id.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase();
   return `会话 ${suffix || "----"}`;
+}
+
+export function taskCardId(id: string): string {
+  const suffix = id.replace(/[^a-zA-Z0-9]/g, "").slice(-4).toUpperCase();
+  return `COD-${suffix || "----"}`;
+}
+
+function threadModelInitial(model: string | null): string {
+  const match = model?.trim().match(/[a-z0-9]+(?=[^a-z0-9]*$)/i);
+  return match?.[0]?.charAt(0).toUpperCase() || "C";
 }
 
 export function shortCwd(cwd: string): string {
@@ -58,6 +70,33 @@ function formatUSD(v: number | null | undefined): string {
 function formatCompactUSD(v: number): string {
   if (v >= 1000) return `$${(v / 1000).toFixed(1)}K`;
   return `$${v.toFixed(0)}`;
+}
+
+const WOOL_MONTHLY_TOKEN_CAP = 200_000_000 * 30;
+const WOOL_REFERENCE_USD_PER_MILLION = 7.75;
+export const WOOL_MONTHLY_VALUE_CAP = (WOOL_MONTHLY_TOKEN_CAP / 1_000_000) * WOOL_REFERENCE_USD_PER_MILLION;
+
+export const WOOL_MILESTONES = [
+  { label: "Plus", value: 20, position: 6, color: "#0A84FF" },
+  { label: "Pro100", value: 100, position: 16, color: "#9B7BFF" },
+  { label: "Pro200", value: 200, position: 30, color: "#7BA0FF" },
+] as const;
+
+export function woolProgressPercent(value: number | null | undefined): number {
+  if (value == null || !Number.isFinite(value) || value <= 0) return 0;
+
+  const [plus, pro100, pro200] = WOOL_MILESTONES;
+  if (value <= plus.value) return (value / plus.value) * plus.position;
+  if (value <= pro100.value) {
+    return plus.position + ((value - plus.value) / (pro100.value - plus.value)) * (pro100.position - plus.position);
+  }
+  if (value <= pro200.value) {
+    return pro100.position + ((value - pro100.value) / (pro200.value - pro100.value)) * (pro200.position - pro100.position);
+  }
+
+  const logarithmicProgress = Math.log(Math.min(value, WOOL_MONTHLY_VALUE_CAP) / pro200.value)
+    / Math.log(WOOL_MONTHLY_VALUE_CAP / pro200.value);
+  return pro200.position + logarithmicProgress * (100 - pro200.position);
 }
 
 function statusText(status: string): string {
@@ -239,11 +278,11 @@ function DualQuotaRing({ primary, secondary }: { primary: RateWindow | null; sec
         )}
       </svg>
       <div className="quota-rings-center">
-        <div className="ring-label primary">
+        <div className="ring-label primary" aria-label={`5 hours ${outerPct != null ? `${outerPct}% remaining` : "unavailable"}`}>
           <span className="tag">5h</span>
           <span className="pct">{outerPct != null ? `${outerPct}%` : "--"}</span>
         </div>
-        <div className="ring-label secondary">
+        <div className="ring-label secondary" aria-label={`7 days ${innerPct != null ? `${innerPct}% remaining` : "unavailable"}`}>
           <span className="tag">7d</span>
           <span className="pct">{innerPct != null ? `${innerPct}%` : "--"}</span>
         </div>
@@ -349,20 +388,45 @@ function DetailedTokenMetricCard({
 
 function WoolProgressCard({ usage }: { usage: { estimatedCostUsd: number | null } | null | undefined }) {
   const estimate = usage?.estimatedCostUsd ?? null;
+  const progress = woolProgressPercent(estimate);
 
   return (
     <div className="wool-progress">
       <div className="wool-progress-header">
         <span className="wool-progress-icon">
-          <IconSparkle />
+          <IconChart />
         </span>
-        <span className="wool-progress-title">本月 API 等效价值</span>
+        <span className="wool-progress-title">羊毛进度</span>
         <span className="wool-progress-amount">{formatUSD(estimate)}</span>
+        <span className="wool-progress-max">/ {formatCompactUSD(WOOL_MONTHLY_VALUE_CAP)}</span>
       </div>
-      <div className="wool-progress-bar" />
+      <div
+        className="wool-progress-bar"
+        role="progressbar"
+        aria-label="本月 API 等效价值进度"
+        aria-valuemin={0}
+        aria-valuemax={WOOL_MONTHLY_VALUE_CAP}
+        aria-valuenow={Math.min(Math.max(estimate ?? 0, 0), WOOL_MONTHLY_VALUE_CAP)}
+        aria-valuetext={`${formatUSD(estimate)} / ${formatCompactUSD(WOOL_MONTHLY_VALUE_CAP)}`}
+      >
+        <div className="wool-progress-fill" style={{ width: `${progress}%` }} />
+        {WOOL_MILESTONES.map((milestone) => (
+          <span
+            key={milestone.label}
+            className="wool-progress-marker"
+            style={{ left: `${milestone.position}%`, backgroundColor: milestone.color }}
+            title={`${milestone.label} ${formatUSD(milestone.value)}`}
+          />
+        ))}
+      </div>
       <div className="wool-progress-milestones">
-        <span className="milestone"><span className="dot" />仅统计可识别定价模型</span>
-        <span className="wool-progress-cap">未知模型不计入金额</span>
+        {WOOL_MILESTONES.map((milestone) => (
+          <span key={milestone.label} className="milestone">
+            <span className="dot" style={{ backgroundColor: milestone.color }} />
+            {milestone.label}
+          </span>
+        ))}
+        <span className="wool-progress-cap">满额 {formatCompactUSD(WOOL_MONTHLY_VALUE_CAP)}</span>
       </div>
     </div>
   );
@@ -520,10 +584,10 @@ function TasksTab({ threads }: { threads: LocalThread[] }) {
     const older = sorted.filter((t) => !t.archived && !active.includes(t));
     const done = sorted.filter((t) => t.archived).slice(0, 8);
     return [
-      { id: "active", title: "近 24 小时", items: active.slice(0, 8), color: "active" },
-      { id: "pending", title: "较早活动", items: older.slice(0, 8), color: "pending" },
-      { id: "scheduled", title: "定时任务", items: [] as LocalThread[], color: "scheduled" },
-      { id: "done", title: "已归档", items: done, color: "done" },
+      { id: "active", title: "进行中", items: active.slice(0, 8), color: "active" },
+      { id: "pending", title: "待处理", items: older.slice(0, 8), color: "pending" },
+      { id: "scheduled", title: "定时", items: [] as LocalThread[], color: "scheduled" },
+      { id: "done", title: "完成", items: done, color: "done" },
     ];
   }, [threads]);
 
@@ -552,19 +616,32 @@ function TasksTab({ threads }: { threads: LocalThread[] }) {
               {col.items.map((thread) => {
                 const usageLevel = getUsageLevel(thread.tokens || 0);
                 const projectName = shortCwd(thread.cwd || "");
+                const activity = col.id === "active"
+                  ? { label: "活跃", tone: "active" }
+                  : col.id === "done"
+                  ? { label: "完成", tone: "done" }
+                  : { label: "待处理", tone: "pending" };
                 return (
                   <div key={thread.id} className="kanban-item">
-                    <div className="kanban-item-header">
-                      <span className="kanban-item-id">{safeThreadLabel(thread)}</span>
+                    <div className="kanban-item-identity">
+                      <span className="kanban-item-id">{taskCardId(thread.id)}</span>
                       <span className="kanban-item-time">{formatRelativeTime(thread.updatedAt)}</span>
                     </div>
-                    <span className="kanban-item-name">{thread.model || "Codex 会话"}</span>
-                    <div className="kanban-item-meta">
-                      <span className="kanban-item-project">{projectName}</span>
+                    <span className="kanban-item-title" title={safeThreadLabel(thread)}>{safeThreadLabel(thread)}</span>
+                    <div className="kanban-item-project-line">
+                      <span className="kanban-item-project" title={projectName}>{projectName}</span>
+                      <span className="kanban-item-separator">·</span>
                       <span className="kanban-item-tokens">{formatTokens(thread.tokens)}</span>
+                    </div>
+                    <div className="kanban-item-footer">
+                      <span className={`kanban-item-activity ${activity.tone}`}>
+                        <span className="kanban-item-activity-dot" />
+                        {activity.label}
+                      </span>
                       <span className={`kanban-item-badge ${usageLevel}`}>
                         {usageLevel === "high" ? "高用量" : usageLevel === "normal" ? "中用量" : "低用量"}
                       </span>
+                      <span className="kanban-item-model" title={thread.model || "Codex 会话"}>{threadModelInitial(thread.model)}</span>
                     </div>
                   </div>
                 );
@@ -918,7 +995,7 @@ const TABS: { id: TabId; label: string; icon: () => React.ReactNode }[] = [
 ];
 
 export default function App() {
-  const { settings, snapshot, isLoading, error, bootstrap, refresh, updateSettings, setSnapshot, setSettings } = useUsageStore();
+  const { settings, snapshot, isInitializing, isRefreshing, error, bootstrap, refresh, updateSettings, setSnapshot, setSettings } = useUsageStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("tasks");
   const [uiTheme, setUiTheme] = useState<"light" | "dark">("dark");
@@ -967,7 +1044,7 @@ export default function App() {
   const handleClose = useCallback(() => {
     if (typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__) {
       import("@tauri-apps/api/window").then(({ getCurrentWindow }) => {
-        getCurrentWindow().hide();
+        void getCurrentWindow().hide();
       });
     }
   }, []);
@@ -991,7 +1068,7 @@ export default function App() {
     }
   }, [activeTab, runtime]);
 
-  if (error) {
+  if (error && !runtime) {
     return (
       <div className="app-shell">
         <div className="fatal-error">
@@ -1005,7 +1082,7 @@ export default function App() {
     );
   }
 
-  if (!runtime || isLoading) {
+  if (!runtime || isInitializing) {
     return (
       <div className="app-shell">
         <div className="loading-state">正在初始化 TokenUsage…</div>
@@ -1021,7 +1098,7 @@ export default function App() {
         onSelectRuntime={(scope) => handleUpdateSettings({ selectedRuntime: scope })}
         isPinned={settings?.keepMainWindowOnTop ?? false}
         onTogglePin={() => handleUpdateSettings({ keepMainWindowOnTop: !settings?.keepMainWindowOnTop })}
-        isRefreshing={isLoading}
+        isRefreshing={isRefreshing}
         onRefresh={handleRefresh}
         onOpenSettings={() => setSettingsOpen(true)}
         onClose={handleClose}

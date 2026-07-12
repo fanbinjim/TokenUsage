@@ -5,7 +5,8 @@ import type { AppSettings, MultiRuntimeUsageSnapshot } from "./types";
 interface UsageState {
   settings: AppSettings | null;
   snapshot: MultiRuntimeUsageSnapshot | null;
-  isLoading: boolean;
+  isInitializing: boolean;
+  isRefreshing: boolean;
   error: string | null;
   bootstrap: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -17,30 +18,31 @@ interface UsageState {
 export const useUsageStore = create<UsageState>((set) => ({
   settings: null,
   snapshot: null,
-  isLoading: true,
+  isInitializing: true,
+  isRefreshing: false,
   error: null,
   bootstrap: async () => {
-    set({ isLoading: true, error: null });
+    set({ isInitializing: true, error: null });
     try {
       const payload = await api.bootstrap();
-      set({ settings: payload.settings, snapshot: payload.snapshot, isLoading: false });
+      set({ settings: payload.settings, snapshot: payload.snapshot, isInitializing: false });
     } catch (error) {
-      set({ error: String(error), isLoading: false });
+      set({ error: String(error), isInitializing: false });
     }
   },
   refresh: async () => {
-    set({ isLoading: true, error: null });
+    set({ isRefreshing: true, error: null });
     try {
       const snapshot = await api.refreshUsage();
-      set({ snapshot, isLoading: false });
+      set({ snapshot, isRefreshing: false });
     } catch (error) {
-      set({ error: String(error), isLoading: false });
+      set({ error: String(error), isRefreshing: false });
     }
   },
   updateSettings: async (patch) => {
     const settings = await api.saveSettings(patch);
     set({ settings });
   },
-  setSnapshot: (snapshot) => set({ snapshot, isLoading: false, error: null }),
+  setSnapshot: (snapshot) => set({ snapshot, isInitializing: false, isRefreshing: false, error: null }),
   setSettings: (settings) => set({ settings }),
 }));

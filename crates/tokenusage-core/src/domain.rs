@@ -21,15 +21,27 @@ pub struct DiagnosticItem {
 
 impl DiagnosticItem {
     pub fn info(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { code: code.into(), severity: DiagnosticSeverity::Info, message: message.into() }
+        Self {
+            code: code.into(),
+            severity: DiagnosticSeverity::Info,
+            message: message.into(),
+        }
     }
 
     pub fn warning(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { code: code.into(), severity: DiagnosticSeverity::Warning, message: message.into() }
+        Self {
+            code: code.into(),
+            severity: DiagnosticSeverity::Warning,
+            message: message.into(),
+        }
     }
 
     pub fn error(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { code: code.into(), severity: DiagnosticSeverity::Error, message: message.into() }
+        Self {
+            code: code.into(),
+            severity: DiagnosticSeverity::Error,
+            message: message.into(),
+        }
     }
 }
 
@@ -43,9 +55,18 @@ pub struct RateWindow {
 }
 
 impl RateWindow {
-    pub fn new(used_percent: f64, window_duration_mins: Option<i64>, resets_at: Option<DateTime<Utc>>) -> Self {
+    pub fn new(
+        used_percent: f64,
+        window_duration_mins: Option<i64>,
+        resets_at: Option<DateTime<Utc>>,
+    ) -> Self {
         let normalized = used_percent.clamp(0.0, 100.0);
-        Self { used_percent: normalized, window_duration_mins, resets_at, remaining_percent: 100.0 - normalized }
+        Self {
+            used_percent: normalized,
+            window_duration_mins,
+            resets_at,
+            remaining_percent: 100.0 - normalized,
+        }
     }
 }
 
@@ -81,17 +102,26 @@ impl TokenBreakdown {
             input_tokens: self.input_tokens - previous.input_tokens,
             cached_input_tokens: self.cached_input_tokens - previous.cached_input_tokens,
             output_tokens: self.output_tokens - previous.output_tokens,
-            reasoning_output_tokens: self.reasoning_output_tokens - previous.reasoning_output_tokens,
+            reasoning_output_tokens: self.reasoning_output_tokens
+                - previous.reasoning_output_tokens,
             total_tokens: self.total_tokens - previous.total_tokens,
         }
     }
 
     pub fn has_negative_values(&self) -> bool {
-        self.input_tokens < 0 || self.cached_input_tokens < 0 || self.output_tokens < 0 || self.reasoning_output_tokens < 0 || self.total_tokens < 0
+        self.input_tokens < 0
+            || self.cached_input_tokens < 0
+            || self.output_tokens < 0
+            || self.reasoning_output_tokens < 0
+            || self.total_tokens < 0
     }
 
     pub fn is_zero(&self) -> bool {
-        self.input_tokens == 0 && self.cached_input_tokens == 0 && self.output_tokens == 0 && self.reasoning_output_tokens == 0 && self.total_tokens == 0
+        self.input_tokens == 0
+            && self.cached_input_tokens == 0
+            && self.output_tokens == 0
+            && self.reasoning_output_tokens == 0
+            && self.total_tokens == 0
     }
 }
 
@@ -105,6 +135,13 @@ pub struct PricedTokenUsage {
 impl PricedTokenUsage {
     pub fn add_tokens(&mut self, value: &TokenBreakdown) {
         self.tokens.add_assign(value);
+    }
+
+    pub fn add_priced_tokens(&mut self, value: &TokenBreakdown, cost_usd: Option<f64>) {
+        self.tokens.add_assign(value);
+        if let Some(cost) = cost_usd {
+            self.estimated_cost_usd = Some(self.estimated_cost_usd.unwrap_or(0.0) + cost);
+        }
     }
 }
 
@@ -200,25 +237,44 @@ pub struct UsageSnapshot {
 impl UsageSnapshot {
     pub fn empty() -> Self {
         Self {
-            refreshed_at: Utc::now(), account: None, limit_id: None, limit_name: None,
-            primary: None, secondary: None, cloud_lifetime_tokens: None, local: None, diagnostics: Vec::new(),
+            refreshed_at: Utc::now(),
+            account: None,
+            limit_id: None,
+            limit_name: None,
+            primary: None,
+            secondary: None,
+            cloud_lifetime_tokens: None,
+            local: None,
+            diagnostics: Vec::new(),
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub enum RuntimeScope { Codex, ClaudeCode }
+pub enum RuntimeScope {
+    Codex,
+    ClaudeCode,
+}
 
 impl RuntimeScope {
     pub fn display_name(self) -> &'static str {
-        match self { Self::Codex => "Codex", Self::ClaudeCode => "Claude Code" }
+        match self {
+            Self::Codex => "Codex",
+            Self::ClaudeCode => "Claude Code",
+        }
     }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub enum RuntimeStatus { Available, LocalOnly, SnapshotNeeded, Stale, Unavailable }
+pub enum RuntimeStatus {
+    Available,
+    LocalOnly,
+    SnapshotNeeded,
+    Stale,
+    Unavailable,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -243,9 +299,30 @@ mod tests {
 
     #[test]
     fn token_delta_preserves_cached_input_as_a_subtotal() {
-        let previous = TokenBreakdown { input_tokens: 100, cached_input_tokens: 70, output_tokens: 10, reasoning_output_tokens: 5, total_tokens: 110 };
-        let current = TokenBreakdown { input_tokens: 150, cached_input_tokens: 100, output_tokens: 20, reasoning_output_tokens: 8, total_tokens: 170 };
-        assert_eq!(current.delta_from(&previous), TokenBreakdown { input_tokens: 50, cached_input_tokens: 30, output_tokens: 10, reasoning_output_tokens: 3, total_tokens: 60 });
+        let previous = TokenBreakdown {
+            input_tokens: 100,
+            cached_input_tokens: 70,
+            output_tokens: 10,
+            reasoning_output_tokens: 5,
+            total_tokens: 110,
+        };
+        let current = TokenBreakdown {
+            input_tokens: 150,
+            cached_input_tokens: 100,
+            output_tokens: 20,
+            reasoning_output_tokens: 8,
+            total_tokens: 170,
+        };
+        assert_eq!(
+            current.delta_from(&previous),
+            TokenBreakdown {
+                input_tokens: 50,
+                cached_input_tokens: 30,
+                output_tokens: 10,
+                reasoning_output_tokens: 3,
+                total_tokens: 60
+            }
+        );
     }
 
     #[test]
@@ -253,5 +330,19 @@ mod tests {
         let window = RateWindow::new(120.0, Some(300), None);
         assert_eq!(window.used_percent, 100.0);
         assert_eq!(window.remaining_percent, 0.0);
+    }
+
+    #[test]
+    fn priced_usage_excludes_token_events_without_a_known_price() {
+        let tokens = TokenBreakdown {
+            input_tokens: 10,
+            total_tokens: 10,
+            ..Default::default()
+        };
+        let mut usage = PricedTokenUsage::default();
+        usage.add_priced_tokens(&tokens, Some(0.01));
+        usage.add_priced_tokens(&tokens, None);
+        assert_eq!(usage.tokens.total_tokens, 20);
+        assert_eq!(usage.estimated_cost_usd, Some(0.01));
     }
 }

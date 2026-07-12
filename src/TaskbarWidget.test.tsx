@@ -1,15 +1,83 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import TaskbarWidget, { taskbarQuotaLevel } from "./TaskbarWidget";
+import TaskbarWidget, { taskbarQuotaLevel, taskbarQuotaValues } from "./TaskbarWidget";
+import type { MultiRuntimeUsageSnapshot } from "./types";
 
-describe("taskbar quota preview", () => {
-  it("renders the fixed 5h and 7d mock percentages", () => {
+describe("taskbar quota", () => {
+  it("renders unavailable placeholders until a live snapshot is available", () => {
     const markup = renderToStaticMarkup(<TaskbarWidget />);
-    expect(markup).toContain("65%");
-    expect(markup).toContain("83%");
-    expect(markup).toContain("scaleX(0.65)");
-    expect(markup).toContain("scaleX(0.83)");
-    expect(markup.match(/quota-healthy/g)).toHaveLength(2);
+    expect(markup).toContain("--");
+    expect(markup).toContain("scaleX(0)");
+    expect(markup.match(/quota-unavailable/g)).toHaveLength(2);
+  });
+
+  it("uses the selected runtime's live remaining quota", () => {
+    const snapshot: MultiRuntimeUsageSnapshot = {
+      schemaVersion: 1,
+      refreshedAt: "2026-07-12T12:00:00Z",
+      runtimes: [
+        {
+          scope: "codex",
+          displayName: "Codex",
+          status: "available",
+          snapshot: {
+            refreshedAt: "2026-07-12T12:00:00Z",
+            account: null,
+            limitId: null,
+            limitName: null,
+            primary: { usedPercent: 35, windowDurationMins: 300, resetsAt: null, remainingPercent: 65 },
+            secondary: { usedPercent: 17, windowDurationMins: 10080, resetsAt: null, remainingPercent: 83 },
+            cloudLifetimeTokens: null,
+            local: null,
+            diagnostics: [],
+          },
+        },
+        {
+          scope: "claudeCode",
+          displayName: "Claude Code",
+          status: "available",
+          snapshot: {
+            refreshedAt: "2026-07-12T12:00:00Z",
+            account: null,
+            limitId: null,
+            limitName: null,
+            primary: { usedPercent: 58, windowDurationMins: 300, resetsAt: null, remainingPercent: 42 },
+            secondary: { usedPercent: 82, windowDurationMins: 10080, resetsAt: null, remainingPercent: 18 },
+            cloudLifetimeTokens: null,
+            local: null,
+            diagnostics: [],
+          },
+        },
+      ],
+    };
+
+    expect(taskbarQuotaValues(snapshot, "claudeCode")).toEqual({ fiveHour: 42, sevenDay: 18 });
+    expect(taskbarQuotaValues(snapshot, "codex")).toEqual({ fiveHour: 65, sevenDay: 83 });
+  });
+
+  it("does not turn missing quota into a fake zero", () => {
+    const snapshot: MultiRuntimeUsageSnapshot = {
+      schemaVersion: 1,
+      refreshedAt: "2026-07-12T12:00:00Z",
+      runtimes: [{
+        scope: "codex",
+        displayName: "Codex",
+        status: "localOnly",
+        snapshot: {
+          refreshedAt: "2026-07-12T12:00:00Z",
+          account: null,
+          limitId: null,
+          limitName: null,
+          primary: null,
+          secondary: null,
+          cloudLifetimeTokens: null,
+          local: null,
+          diagnostics: [],
+        },
+      }],
+    };
+
+    expect(taskbarQuotaValues(snapshot, "codex")).toEqual({ fiveHour: null, sevenDay: null });
   });
 
   it("maps quota percentages to non-overlapping warning ranges", () => {

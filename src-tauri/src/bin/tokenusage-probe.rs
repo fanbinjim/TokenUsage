@@ -14,5 +14,8 @@ fn main() {
             }
         }
     }
-    println!("{}", serde_json::to_string_pretty(&snapshot).expect("snapshot serialization failed"));
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&snapshot).expect("snapshot serialization failed")
+    );
 }

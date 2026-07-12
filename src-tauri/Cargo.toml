@@ -12,6 +12,12 @@ default-run = "tokenusage"
 name = "tokenusage_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# `tauri build` enables this feature for production binaries.  Without it,
+# Tauri treats the binary as a dev build and opens `build.devUrl` instead of
+# the bundled `frontendDist` assets.
+custom-protocol = ["tauri/custom-protocol"]
+
 [[bin]]
 name = "tokenusage"
 path = "src/main.rs"

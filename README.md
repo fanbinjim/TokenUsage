@@ -47,7 +47,7 @@ cargo check --workspace
 
 ```powershell
 $env:Path = "$HOME\.cargo\bin;$env:Path"
-npm exec tauri build -- --no-bundle
+npm exec tauri build -- --features custom-protocol --no-bundle
 ```
 
 ## 数据与隐私
