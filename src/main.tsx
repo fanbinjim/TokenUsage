@@ -11,6 +11,7 @@ const currentWindowLabel = (window as Window & {
 const previewParams = new URLSearchParams(window.location.search);
 const isDevelopment = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
 const isTaskbarPreview = isDevelopment && previewParams.has("taskbar-preview");
+const isMainMockPreview = isDevelopment && previewParams.get("mock") === "main";
 const previewResetMinutes = Math.max(0, Number(previewParams.get("reset-minutes")) || 222);
 const taskbarPreview = isTaskbarPreview ? {
   fiveHour: Math.max(0, Math.min(100, Number(previewParams.get("five-hour")) || 65)),
@@ -25,6 +26,6 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     {currentWindowLabel === "taskbar-widget" || isTaskbarPreview ? <TaskbarWidget preview={taskbarPreview} />
       : currentWindowLabel === "taskbar-input-proxy" ? <TaskbarInputProxy />
-      : <App />}
+      : <App mockMode={isMainMockPreview} />}
   </StrictMode>,
 );

@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { formatTokens, formatReset } from "./format";
+import { createMockDashboardSnapshot, MOCK_SETTINGS } from "./mockDashboard";
 import { useUsageStore } from "./store";
 import type {
   AppSettings,
@@ -994,29 +995,55 @@ const TABS: { id: TabId; label: string; icon: () => React.ReactNode }[] = [
   { id: "skills", label: "Skill", icon: IconStar },
 ];
 
-export default function App() {
-  const { settings, snapshot, isInitializing, isRefreshing, error, bootstrap, refresh, updateSettings, setSnapshot, setSettings } = useUsageStore();
+export default function App({ mockMode = false }: { mockMode?: boolean }) {
+  const {
+    settings: liveSettings,
+    snapshot: liveSnapshot,
+    isInitializing: liveIsInitializing,
+    isRefreshing: liveIsRefreshing,
+    error: liveError,
+    bootstrap,
+    refresh,
+    updateSettings,
+    setSnapshot,
+    setSettings,
+  } = useUsageStore();
+  const [mockSettings, setMockSettings] = useState<AppSettings>(MOCK_SETTINGS);
+  const [mockSnapshot, setMockSnapshot] = useState<MultiRuntimeUsageSnapshot>(() => createMockDashboardSnapshot());
+  const [mockIsRefreshing, setMockIsRefreshing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("tasks");
   const [uiTheme, setUiTheme] = useState<"light" | "dark">("dark");
 
-  useEffect(() => { void bootstrap(); }, [bootstrap]);
+  const settings = mockMode ? mockSettings : liveSettings;
+  const snapshot = mockMode ? mockSnapshot : liveSnapshot;
+  const isInitializing = mockMode ? false : liveIsInitializing;
+  const isRefreshing = mockMode ? mockIsRefreshing : liveIsRefreshing;
+  const error = mockMode ? null : liveError;
+
   useEffect(() => {
+    if (!mockMode) void bootstrap();
+  }, [bootstrap, mockMode]);
+  useEffect(() => {
+    if (mockMode) return;
     const unlisten = listen("tokenusage://refresh-requested", () => { void refresh(); });
     return () => { unlisten.then((d: () => void) => d()); };
-  }, [refresh]);
+  }, [mockMode, refresh]);
   useEffect(() => {
+    if (mockMode) return;
     const unlisten = listen("tokenusage://open-settings", () => setSettingsOpen(true));
     return () => { unlisten.then((d: () => void) => d()); };
-  }, []);
+  }, [mockMode]);
   useEffect(() => {
+    if (mockMode) return;
     const unlisten = listen<MultiRuntimeUsageSnapshot>("tokenusage://snapshot", ({ payload }) => setSnapshot(payload));
     return () => { unlisten.then((d: () => void) => d()); };
-  }, [setSnapshot]);
+  }, [mockMode, setSnapshot]);
   useEffect(() => {
+    if (mockMode) return;
     const unlisten = listen<AppSettings>("tokenusage://settings-updated", ({ payload }) => setSettings(payload));
     return () => { unlisten.then((d: () => void) => d()); };
-  }, [setSettings]);
+  }, [mockMode, setSettings]);
   useEffect(() => {
     if (!settings) return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -1029,10 +1056,26 @@ export default function App() {
     return () => media.removeEventListener("change", applyTheme);
   }, [settings]);
 
-  const handleRefresh = useCallback(() => { void refresh(); }, [refresh]);
+  const handleRefresh = useCallback(() => {
+    if (mockMode) {
+      setMockIsRefreshing(true);
+      window.setTimeout(() => {
+        setMockSnapshot(createMockDashboardSnapshot());
+        setMockIsRefreshing(false);
+      }, 350);
+      return;
+    }
+    void refresh();
+  }, [mockMode, refresh]);
   const handleUpdateSettings = useCallback(
-    (patch: Partial<AppSettings>) => { void updateSettings(patch); },
-    [updateSettings],
+    (patch: Partial<AppSettings>) => {
+      if (mockMode) {
+        setMockSettings((current) => ({ ...current, ...patch }));
+        return;
+      }
+      void updateSettings(patch);
+    },
+    [mockMode, updateSettings],
   );
 
   const handleToggleTheme = useCallback(() => {

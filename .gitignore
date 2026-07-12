@@ -10,3 +10,6 @@ target/
 # Local Codex/Claude fixtures and private probe output
 fixtures/private/
 probe-output*.json
+
+# Local visual verification captures
+test-artifacts/screenshots/

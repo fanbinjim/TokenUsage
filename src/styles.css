@@ -224,7 +224,7 @@ select, input {
   display: flex;
   align-items: center;
   height: var(--titlebar-height);
-  padding: 0 18px 0 20px;
+  padding: 0 var(--window-padding) 0 20px;
   flex-shrink: 0;
   user-select: none;
   -webkit-app-region: drag;
@@ -1393,7 +1393,7 @@ select, input {
   display: flex;
   align-items: center;
   gap: 8px;
-  transform: translateY(-3px);
+  transform: translateY(-6px);
 }
 
 .footer-refreshed {
@@ -1403,7 +1403,10 @@ select, input {
   font-weight: 500;
   line-height: 1;
   color: var(--text-tertiary);
-  transform: translateY(-3px);
+}
+
+.footer > .footer-refreshed {
+  transform: translateY(-6px);
 }
 
 .footer-shortcut {
@@ -1421,7 +1424,7 @@ select, input {
   border-radius: 6px;
   background: var(--surface-control-bg);
   border: 1px solid var(--surface-control-border);
-  transform: translateY(-3px);
+  transform: translateY(-6px);
 }
 
 /* ---- Fixed workspace panels ---- */

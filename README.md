@@ -34,6 +34,18 @@ $env:Path = "$HOME\.cargo\bin;$env:Path"
 npm run tauri:dev
 ```
 
+## 浏览器主界面 Mock 模式
+
+用于精调布局、间距、卡片和主题时，先启动浏览器版完整主界面，无需编译 Rust、启动 Tauri 或读取本机 Codex 数据：
+
+```powershell
+npm run dev:mock
+```
+
+命令会打开 `http://localhost:5174/?mock=main`。此模式使用固定的演示数据，覆盖圆环额度、Token 统计、羊毛进度、任务卡片、趋势、项目和 Skill 面板；刷新、切换标签、主题与设置均可交互，但不会调用 Tauri IPC、修改本机设置或读取本地 session。
+
+建议工作流：先在 Mock 模式完成视觉调整，再使用 `npm run tauri:dev` 验收透明窗口、拖拽区、原生按钮、快捷键和任务栏组件，最后才执行 Release 打包。
+
 验证：
 
 ```powershell

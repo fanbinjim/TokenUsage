@@ -111,6 +111,7 @@ describe("taskbar quota", () => {
       remainingMinutes: 222,
     });
     expect(countdown?.progress).toBeCloseTo(222 / 300, 5);
+    expect(countdown?.resetTime).toMatch(/^\d{2}:\d{2}$/);
   });
 
   it("uses urgent colors as the five-hour reset approaches", () => {

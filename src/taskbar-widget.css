@@ -121,9 +121,10 @@
   display: grid;
   place-items: center;
   color: #344454;
-  font-size: 7px;
+  font-size: 6.5px;
   font-weight: 750;
   line-height: 1;
+  letter-spacing: -0.02em;
   white-space: nowrap;
 }
 

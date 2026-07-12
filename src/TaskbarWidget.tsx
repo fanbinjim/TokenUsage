@@ -131,7 +131,7 @@ function ResetCountdown({ window, nowMs }: { window: RateWindow | null; nowMs: n
           strokeDasharray={`${progress} 100`}
         />
       </svg>
-      <span className="taskbar-reset-label">{countdown?.label ?? "--"}</span>
+      <span className="taskbar-reset-label">{countdown?.resetTime ?? "--"}</span>
     </div>
   );
 }
