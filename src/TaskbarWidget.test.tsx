@@ -1,6 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import TaskbarWidget, { taskbarQuotaLevel, taskbarQuotaValues } from "./TaskbarWidget";
+import TaskbarWidget, {
+  taskbarQuotaLevel,
+  taskbarQuotaValues,
+  taskbarResetCountdown,
+  taskbarResetLevel,
+} from "./TaskbarWidget";
 import type { MultiRuntimeUsageSnapshot } from "./types";
 
 describe("taskbar quota", () => {
@@ -51,8 +56,8 @@ describe("taskbar quota", () => {
       ],
     };
 
-    expect(taskbarQuotaValues(snapshot, "claudeCode")).toEqual({ fiveHour: 42, sevenDay: 18 });
-    expect(taskbarQuotaValues(snapshot, "codex")).toEqual({ fiveHour: 65, sevenDay: 83 });
+    expect(taskbarQuotaValues(snapshot, "claudeCode")).toMatchObject({ fiveHour: 42, sevenDay: 18 });
+    expect(taskbarQuotaValues(snapshot, "codex")).toMatchObject({ fiveHour: 65, sevenDay: 83 });
   });
 
   it("does not turn missing quota into a fake zero", () => {
@@ -77,7 +82,7 @@ describe("taskbar quota", () => {
       }],
     };
 
-    expect(taskbarQuotaValues(snapshot, "codex")).toEqual({ fiveHour: null, sevenDay: null });
+    expect(taskbarQuotaValues(snapshot, "codex")).toEqual({ fiveHour: null, sevenDay: null, fiveHourWindow: null });
   });
 
   it("maps quota percentages to non-overlapping warning ranges", () => {
@@ -89,5 +94,40 @@ describe("taskbar quota", () => {
     expect(taskbarQuotaLevel(59.99)).toBe("info");
     expect(taskbarQuotaLevel(60)).toBe("healthy");
     expect(taskbarQuotaLevel(100)).toBe("healthy");
+  });
+
+  it("calculates the countdown from the server reset timestamp", () => {
+    const now = Date.parse("2026-07-12T08:00:00Z");
+    const countdown = taskbarResetCountdown({
+      usedPercent: 35,
+      remainingPercent: 65,
+      windowDurationMins: 300,
+      resetsAt: "2026-07-12T11:42:00Z",
+    }, now);
+
+    expect(countdown).toMatchObject({
+      label: "3:42",
+      level: "healthy",
+      remainingMinutes: 222,
+    });
+    expect(countdown?.progress).toBeCloseTo(222 / 300, 5);
+  });
+
+  it("uses urgent colors as the five-hour reset approaches", () => {
+    expect(taskbarResetLevel(181)).toBe("healthy");
+    expect(taskbarResetLevel(180)).toBe("info");
+    expect(taskbarResetLevel(90)).toBe("warning");
+    expect(taskbarResetLevel(30)).toBe("danger");
+    expect(taskbarResetLevel(0)).toBe("danger");
+  });
+
+  it("keeps missing or invalid reset timestamps unavailable", () => {
+    expect(taskbarResetCountdown(null)).toBeNull();
+    expect(taskbarResetCountdown({
+      usedPercent: 35,
+      remainingPercent: 65,
+      windowDurationMins: 300,
+      resetsAt: "not-a-date",
+    })).toBeNull();
   });
 });

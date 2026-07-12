@@ -2,8 +2,9 @@
   width: 100%;
   height: 100%;
   display: grid;
-  align-content: center;
-  gap: 4px;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 6px;
   padding: 2px 4px;
   color: rgba(18, 54, 86, 0.92);
   font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", sans-serif;
@@ -12,6 +13,12 @@
   line-height: 1;
   pointer-events: auto;
   user-select: none;
+}
+
+.taskbar-widget-quotas {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
 }
 
 .taskbar-widget-row {
@@ -73,5 +80,63 @@
 }
 
 .taskbar-widget-row.quota-unavailable .taskbar-widget-value {
+  color: rgba(52, 68, 84, 0.55);
+}
+
+.taskbar-reset-countdown {
+  --reset-color: #2f9064;
+  position: relative;
+  width: 28px;
+  height: 28px;
+  color: var(--reset-color);
+}
+
+.taskbar-reset-ring {
+  display: block;
+  width: 28px;
+  height: 28px;
+  overflow: visible;
+  transform: rotate(-90deg);
+}
+
+.taskbar-reset-ring-track,
+.taskbar-reset-ring-progress {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.taskbar-reset-ring-track {
+  stroke: rgba(52, 68, 84, 0.16);
+}
+
+.taskbar-reset-ring-progress {
+  stroke: currentColor;
+  stroke-linecap: round;
+  transition: stroke-dasharray 240ms linear, stroke 180ms ease-out;
+}
+
+.taskbar-reset-label {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #344454;
+  font-size: 7px;
+  font-weight: 750;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.taskbar-reset-countdown.reset-danger { --reset-color: #cf515a; }
+.taskbar-reset-countdown.reset-warning { --reset-color: #b98220; }
+.taskbar-reset-countdown.reset-info { --reset-color: #367bb7; }
+.taskbar-reset-countdown.reset-healthy { --reset-color: #2f9064; }
+.taskbar-reset-countdown.reset-unavailable { --reset-color: #89929b; }
+
+.taskbar-reset-countdown.reset-unavailable .taskbar-reset-ring-progress {
+  display: none;
+}
+
+.taskbar-reset-countdown.reset-unavailable .taskbar-reset-label {
   color: rgba(52, 68, 84, 0.55);
 }
