@@ -863,16 +863,29 @@ select, input {
 }
 
 .tab-btn {
+  box-sizing: border-box;
   display: flex;
+  flex: 0 0 var(--tab-width);
   align-items: center;
   gap: 6px;
   padding: 7px 14px;
   border-radius: 7px;
   font-size: 12px;
-  font-weight: 550;
+  font-weight: 650;
   color: var(--text-secondary);
   transition: background var(--ease-out), color var(--ease-out);
   justify-content: center;
+  white-space: nowrap;
+}
+
+.tab-btn[data-tab="tasks"],
+.tab-btn[data-tab="trends"],
+.tab-btn[data-tab="projects"] {
+  --tab-width: 96px;
+}
+
+.tab-btn[data-tab="skills"] {
+  --tab-width: 72px;
 }
 
 .tab-btn:hover {
@@ -882,7 +895,6 @@ select, input {
 .tab-btn.active {
   background: var(--surface-control-selected);
   color: var(--text-primary);
-  font-weight: 650;
 }
 
 .tab-btn .tab-icon {

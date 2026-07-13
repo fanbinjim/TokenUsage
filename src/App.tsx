@@ -1441,6 +1441,7 @@ export default function App({ mockMode = false }: { mockMode?: boolean }) {
                 <button
                   key={tab.id}
                   className={`tab-btn${activeTab === tab.id ? " active" : ""}`}
+                  data-tab={tab.id}
                   onClick={() => setActiveTab(tab.id)}
                 >
                   <span className="tab-icon"><tab.icon /></span>
