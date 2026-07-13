@@ -161,8 +161,21 @@ fn read_local_usage(
         .filter_map(Result::ok)
         .collect();
 
+    let mut diagnostics = Vec::new();
+    let session_usage = read_session_usage(
+        &connection,
+        &columns,
+        day_start,
+        seven_day_start,
+        &mut diagnostics,
+    );
     let daily_map = query_daily_tokens(&connection, trend_start)?;
-    let trend_days = make_daily_buckets(trend_start, TREND_DAY_COUNT, &daily_map);
+    let trend_days = make_daily_buckets(
+        trend_start,
+        TREND_DAY_COUNT,
+        &daily_map,
+        &session_usage.daily_breakdowns,
+    );
     let daily_buckets = trend_days
         .iter()
         .rev()
@@ -174,15 +187,6 @@ fn read_local_usage(
         .collect();
     let usage_trend = Some(build_usage_trend(trend_days));
     let projects = query_projects(&connection, &columns)?;
-
-    let mut diagnostics = Vec::new();
-    let session_usage = read_session_usage(
-        &connection,
-        &columns,
-        day_start,
-        seven_day_start,
-        &mut diagnostics,
-    );
     Ok((
         LocalUsage {
             lifetime_tokens: totals.0,
@@ -230,14 +234,20 @@ fn make_daily_buckets(
     start: DateTime<Local>,
     count: i64,
     daily_map: &HashMap<String, i64>,
+    daily_breakdowns: &HashMap<String, TokenBreakdown>,
 ) -> Vec<DailyTokenBucket> {
     (0..count)
         .map(|offset| {
             let date = start + Duration::days(offset);
             let id = date.format("%Y-%m-%d").to_string();
+            let breakdown = daily_breakdowns.get(&id);
             DailyTokenBucket {
                 label: date.format("%-m/%-d").to_string(),
                 tokens: *daily_map.get(&id).unwrap_or(&0),
+                input_tokens: breakdown.map(|value| value.input_tokens),
+                cached_input_tokens: breakdown.map(|value| value.cached_input_tokens),
+                output_tokens: breakdown.map(|value| value.output_tokens),
+                reasoning_output_tokens: breakdown.map(|value| value.reasoning_output_tokens),
                 id,
             }
         })
@@ -393,6 +403,7 @@ fn safe_project_name(path: &str) -> String {
 #[derive(Default)]
 struct SessionUsage {
     detailed_usage: Option<DetailedUsage>,
+    daily_breakdowns: HashMap<String, TokenBreakdown>,
     skill_usage: Vec<NamedUsage>,
     tool_usage: Vec<NamedUsage>,
 }
@@ -445,6 +456,7 @@ fn read_session_usage(
         .unwrap_or(now)
         .with_timezone(&Utc);
     let mut usage = DetailedUsage::default();
+    let mut daily_breakdowns: HashMap<String, TokenBreakdown> = HashMap::new();
     let mut skills = HashMap::new();
     let mut tools = HashMap::new();
     for (path, fallback_model) in sources {
@@ -456,6 +468,10 @@ fn read_session_usage(
         usage.parsed_file_count += 1;
         usage.token_event_count += parsed.deltas.len();
         for (at, delta, model) in parsed.deltas {
+            daily_breakdowns
+                .entry(at.with_timezone(&Local).format("%Y-%m-%d").to_string())
+                .or_default()
+                .add_assign(&delta);
             let cost_usd = estimate_cost_usd(&delta, model.as_deref());
             usage.lifetime.add_priced_tokens(&delta, cost_usd);
             if at >= month_start {
@@ -473,6 +489,7 @@ fn read_session_usage(
     }
     SessionUsage {
         detailed_usage: (!usage.token_event_count.eq(&0)).then_some(usage),
+        daily_breakdowns,
         skill_usage: counters_to_named_usage(skills),
         tool_usage: counters_to_named_usage(tools),
     }
@@ -776,12 +793,41 @@ mod tests {
                 id: index.to_string(),
                 label: index.to_string(),
                 tokens: if index < 7 { 10 } else { 20 },
+                input_tokens: None,
+                cached_input_tokens: None,
+                output_tokens: None,
+                reasoning_output_tokens: None,
             })
             .collect();
         let trend = build_usage_trend(days);
         assert_eq!(trend.previous_seven_day_tokens, 70);
         assert_eq!(trend.seven_day_tokens, 140);
         assert_eq!(trend.change_percent, Some(100.0));
+    }
+
+    #[test]
+    fn daily_buckets_include_real_session_token_types_when_available() {
+        let start = local_day_start();
+        let id = start.format("%Y-%m-%d").to_string();
+        let totals = HashMap::from([(id.clone(), 190)]);
+        let breakdowns = HashMap::from([(
+            id,
+            TokenBreakdown {
+                input_tokens: 100,
+                cached_input_tokens: 60,
+                output_tokens: 80,
+                reasoning_output_tokens: 10,
+                total_tokens: 180,
+            },
+        )]);
+
+        let days = make_daily_buckets(start, 2, &totals, &breakdowns);
+        assert_eq!(days[0].tokens, 190);
+        assert_eq!(days[0].input_tokens, Some(100));
+        assert_eq!(days[0].cached_input_tokens, Some(60));
+        assert_eq!(days[0].output_tokens, Some(80));
+        assert_eq!(days[0].reasoning_output_tokens, Some(10));
+        assert_eq!(days[1].input_tokens, None);
     }
 
     #[test]

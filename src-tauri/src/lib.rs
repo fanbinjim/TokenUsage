@@ -38,6 +38,7 @@ const TASKBAR_INPUT_PROXY_LABEL: &str = "taskbar-input-proxy";
 const TASKBAR_WIDGET_WIDTH: f64 = 184.0;
 const TASKBAR_WIDGET_VERTICAL_MARGIN: f64 = 3.0;
 const TASKBAR_NOTIFICATION_FALLBACK_WIDTH: f64 = 320.0;
+const USAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -293,7 +294,7 @@ pub fn run() {
 fn start_usage_refresh_loop(app: AppHandle) {
     std::thread::spawn(move || {
         loop {
-            std::thread::sleep(Duration::from_secs(120));
+            std::thread::sleep(USAGE_REFRESH_INTERVAL);
             let Some(state) = app.try_state::<AppState>() else {
                 return;
             };

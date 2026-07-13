@@ -1,10 +1,15 @@
-import React, { useEffect, useState, useMemo, useCallback } from "react";
+import React, { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
+import * as echarts from "echarts/core";
+import { LineChart } from "echarts/charts";
+import { GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
+import { CanvasRenderer } from "echarts/renderers";
 import { formatTokens, formatReset } from "./format";
 import { createMockDashboardSnapshot, MOCK_SETTINGS } from "./mockDashboard";
 import { useUsageStore } from "./store";
 import type {
   AppSettings,
+  DailyTokenBucket,
   LocalThread,
   MultiRuntimeUsageSnapshot,
   NamedUsage,
@@ -14,6 +19,8 @@ import type {
   RuntimeUsageSnapshot,
   TokenBreakdown,
 } from "./types";
+
+echarts.use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
 const appIconUrl = new URL("../src-tauri/icons/icon.png", import.meta.url).href;
 
@@ -673,14 +680,77 @@ function TasksTab({ threads }: { threads: LocalThread[] }) {
    Trends Tab
    ======================================================== */
 
+interface HeatmapWeek {
+  monthLabel: string | null;
+  days: (DailyTokenBucket | null)[];
+  futurePlaceholderCount: number;
+}
+
+const HEATMAP_WEEK_COUNT = 27;
+
+export interface MonthlyUsageBucket {
+  id: string;
+  label: string;
+  tokens: number;
+}
+
+function calendarDateId(parts: { year: number; month: number; day: number }): string {
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+function offsetCalendarDate(parts: { year: number; month: number; day: number }, offset: number) {
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + offset));
+  return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate() };
+}
+
+function compareCalendarDates(left: { year: number; month: number; day: number }, right: { year: number; month: number; day: number }): number {
+  return calendarDateId(left).localeCompare(calendarDateId(right));
+}
+
+export function buildHeatmapCalendar(days: DailyTokenBucket[], now = new Date()): HeatmapWeek[] {
+  const today = { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate() };
+  const todayWeekday = (new Date(Date.UTC(today.year, today.month - 1, today.day)).getUTCDay() + 6) % 7;
+  const currentMonday = offsetCalendarDate(today, -todayWeekday);
+  const firstMonday = offsetCalendarDate(currentMonday, -(HEATMAP_WEEK_COUNT - 1) * 7);
+  const bucketsByDate = new Map(days.map((day) => [day.id, day]));
+
+  let visibleMonth: string | null = null;
+  return Array.from({ length: HEATMAP_WEEK_COUNT }, (_, index) => {
+    const calendarDays = Array.from({ length: 7 }, (_, dayIndex) => offsetCalendarDate(firstMonday, index * 7 + dayIndex));
+    const weekDays = calendarDays.map((date) => (
+      compareCalendarDates(date, today) > 0 ? null : bucketsByDate.get(calendarDateId(date)) ?? null
+    ));
+    const nextMonth = calendarDays.find((date) => `${date.year}-${date.month}` !== visibleMonth);
+    const monthLabel = nextMonth ? `${nextMonth.month}月` : null;
+    const lastDate = calendarDays[calendarDays.length - 1];
+    visibleMonth = `${lastDate.year}-${lastDate.month}`;
+    return {
+      monthLabel,
+      days: weekDays,
+      futurePlaceholderCount: index === HEATMAP_WEEK_COUNT - 1 ? 6 - todayWeekday : 0,
+    };
+  });
+}
+
+export function buildHalfYearMonthlyUsage(days: DailyTokenBucket[]): MonthlyUsageBucket[] {
+  const totals = new Map<string, number>();
+  for (const day of days) {
+    const key = day.id.slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(key)) continue;
+    totals.set(key, (totals.get(key) ?? 0) + Math.max(0, day.tokens));
+  }
+  return [...totals.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([id, tokens]) => ({ id, label: `${Number(id.slice(5, 7))}月`, tokens }));
+}
+
 function TrendsTab({ local }: { local: NonNullable<RuntimeUsageSnapshot["snapshot"]["local"]> }) {
+  const [halfYearMode, setHalfYearMode] = useState<"day" | "month">("day");
   const buckets = local.dailyBuckets ?? [];
   const detailed = local.detailedUsage;
   const trend = local.usageTrend;
-  const heatmapWeeks = useMemo(() => {
-    const days = trend?.days ?? [];
-    return Array.from({ length: Math.ceil(days.length / 7) }, (_, index) => days.slice(index * 7, index * 7 + 7));
-  }, [trend]);
+  const heatmapWeeks = useMemo(() => buildHeatmapCalendar(trend?.days ?? []), [trend]);
+  const monthlyUsage = useMemo(() => buildHalfYearMonthlyUsage(trend?.days ?? []), [trend]);
   const heatmapThresholds = useMemo(() => {
     const values = (trend?.days ?? []).map((day) => day.tokens).filter((tokens) => tokens > 0).sort((a, b) => a - b);
     if (!values.length) return [0, 0, 0, 0];
@@ -692,51 +762,75 @@ function TrendsTab({ local }: { local: NonNullable<RuntimeUsageSnapshot["snapsho
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-        <div className="trend-card">
+      <div className="trends-overview-grid">
+        <div className="trend-card half-year-trend-card">
           <div className="trend-card-header">
             <span className="trend-card-title">最近半年用量</span>
+            <div className="half-year-granularity" role="group" aria-label="半年用量统计口径">
+              <button type="button" className={halfYearMode === "day" ? "active" : ""} onClick={() => setHalfYearMode("day")} title="按日显示">日</button>
+              <button type="button" className={halfYearMode === "month" ? "active" : ""} onClick={() => setHalfYearMode("month")} title="按月汇总">月</button>
+            </div>
           </div>
           <div className="heatmap-container">
-            <div className="heatmap-weeks">
-              {heatmapWeeks.length > 0 ? (
-                heatmapWeeks.map((week, wi) => (
-                  <div key={wi} className="heatmap-week">
-                    {week.map((day, di) => {
-                      const tokens = day.tokens || 0;
-                      let level = 0;
-                      if (tokens > 0) {
-                        if (tokens >= heatmapThresholds[3]) level = 4;
-                        else if (tokens >= heatmapThresholds[2]) level = 3;
-                        else if (tokens >= heatmapThresholds[1]) level = 2;
-                        else if (tokens >= heatmapThresholds[0]) level = 1;
-                      }
-                      return (
-                        <div
-                          key={di}
-                          className={`heatmap-cell${level > 0 ? ` level-${level}` : ""}`}
-                          title={day.id}
-                        />
-                      );
-                    })}
+            {halfYearMode === "day" && heatmapWeeks.length > 0 ? (
+              <>
+                <div className="heatmap-calendar">
+                  <div className="heatmap-month-spacer" />
+                  <div className="heatmap-months" aria-hidden="true">
+                    {heatmapWeeks.map((week, index) => (
+                      <span key={index}>{week.monthLabel}</span>
+                    ))}
                   </div>
-                ))
-              ) : (
-                <div style={{ opacity: 0.3, fontSize: 11, color: "var(--text-tertiary)" }}>
-                  暂无热力图数据
+                  <div className="heatmap-weekdays" aria-hidden="true">
+                    {['一', '二', '三', '四', '五', '六', '日'].map((label) => <span key={label}>{label}</span>)}
+                  </div>
+                  <div className="heatmap-weeks">
+                    {heatmapWeeks.map((week, wi) => (
+                      <div key={wi} className="heatmap-week">
+                        {week.days.map((day, di) => {
+                          if (!day) {
+                            const isFuture = di >= 7 - week.futurePlaceholderCount;
+                            return <div key={di} className={`heatmap-cell${isFuture ? " is-future-placeholder" : ""}`} aria-hidden="true" />;
+                          }
+                          const tokens = day.tokens || 0;
+                          let level = 0;
+                          if (tokens > 0) {
+                            if (tokens >= heatmapThresholds[3]) level = 4;
+                            else if (tokens >= heatmapThresholds[2]) level = 3;
+                            else if (tokens >= heatmapThresholds[1]) level = 2;
+                            else if (tokens >= heatmapThresholds[0]) level = 1;
+                          }
+                          return (
+                            <div
+                              key={di}
+                              className={`heatmap-cell${level > 0 ? ` level-${level}` : ""}`}
+                              title={`${day.id} · ${formatTokens(tokens)}`}
+                            />
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              )}
-            </div>
-            <div className="heatmap-labels">
-              <span>少</span>
-              <span>多</span>
-            </div>
+                <div className="heatmap-legend" aria-label="用量强度：从少到多">
+                  <span>少</span>
+                  {[0, 1, 2, 3, 4].map((level) => (
+                    <span key={level} className={`heatmap-cell heatmap-legend-cell${level ? ` level-${level}` : ""}`} />
+                  ))}
+                  <span>多</span>
+                </div>
+              </>
+            ) : halfYearMode === "month" && monthlyUsage.length > 0 ? (
+              <HalfYearMonthChart buckets={monthlyUsage} />
+            ) : (
+              <div className="heatmap-empty">暂无热力图数据</div>
+            )}
           </div>
         </div>
 
         <div className="trend-card">
           <div className="trend-card-header">
-            <span className="trend-card-title">最近 7 日</span>
+            <span className="trend-card-title">最近 7 日用量趋势</span>
             {sevenDaySummary && (
               <span className="trend-card-sub">
                 {sevenDaySummary.isNew
@@ -763,71 +857,246 @@ function TrendsTab({ local }: { local: NonNullable<RuntimeUsageSnapshot["snapsho
   );
 }
 
-function SevenDayLineChart({ buckets }: { buckets: { id: string; label: string; tokens: number }[] }) {
-  const values = buckets.map((b) => b.tokens);
-  const max = Math.max(...values, 1);
-  const width = 280;
-  const height = 100;
-  const padding = { top: 10, right: 4, bottom: 20, left: 4 };
-  const chartW = width - padding.left - padding.right;
-  const chartH = height - padding.top - padding.bottom;
+interface TrendChartTheme {
+  text: string;
+  muted: string;
+  grid: string;
+  tooltipBackground: string;
+  tooltipBorder: string;
+}
 
-  const points = values.map((v, i) => {
-    const x = padding.left + (i / Math.max(values.length - 1, 1)) * chartW;
-    const y = padding.top + chartH - (v / max) * chartH;
-    return `${x},${y}`;
+function readTrendChartTheme(container: HTMLElement): TrendChartTheme {
+  const styles = getComputedStyle(container);
+  const read = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
+  return {
+    text: read("--text-primary", "#f5f5f7"),
+    muted: read("--text-tertiary", "#98989d"),
+    grid: read("--surface-card-border", "rgba(142, 142, 147, 0.22)"),
+    tooltipBackground: read("--surface-section-bg", "rgba(32, 32, 35, 0.94)"),
+    tooltipBorder: read("--surface-section-border", "rgba(255, 255, 255, 0.16)"),
+  };
+}
+
+function tokenAxisLabel(value: number): string {
+  if (value >= 1_000_000) return `${Math.round(value / 1_000_000)}M`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}K`;
+  return String(Math.round(value));
+}
+
+export function buildHalfYearMonthlyChartOption(
+  buckets: MonthlyUsageBucket[],
+  theme: TrendChartTheme,
+): echarts.EChartsCoreOption {
+  return {
+    animationDuration: 350,
+    color: ["#5B8FF9"],
+    grid: { top: 8, right: 8, bottom: 20, left: 36, containLabel: false },
+    tooltip: {
+      trigger: "axis",
+      confine: true,
+      backgroundColor: theme.tooltipBackground,
+      borderColor: theme.tooltipBorder,
+      borderWidth: 1,
+      textStyle: { color: theme.text, fontSize: 11 },
+      axisPointer: { type: "line", lineStyle: { color: theme.grid, type: "dashed" } },
+    },
+    xAxis: {
+      type: "category",
+      boundaryGap: false,
+      data: buckets.map((bucket) => bucket.label),
+      axisLine: { lineStyle: { color: theme.grid } },
+      axisTick: { show: false },
+      axisLabel: { color: theme.muted, fontSize: 9, interval: 0 },
+    },
+    yAxis: {
+      type: "value",
+      min: 0,
+      splitNumber: 2,
+      axisLabel: { color: theme.muted, fontSize: 9, formatter: tokenAxisLabel },
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: theme.grid, type: "dashed" } },
+    },
+    series: [{
+      name: "总用量",
+      type: "line",
+      data: buckets.map((bucket) => bucket.tokens),
+      smooth: 0.35,
+      symbol: "circle",
+      symbolSize: 5,
+      showSymbol: false,
+      lineStyle: { color: "#5B8FF9", width: 2.2 },
+      itemStyle: { color: "#5B8FF9" },
+      emphasis: { showSymbol: true },
+      tooltip: { valueFormatter: (value: unknown) => formatTokens(Number(value)) },
+    }],
+  };
+}
+
+function HalfYearMonthChart({ buckets }: { buckets: MonthlyUsageBucket[] }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const chart = echarts.init(container, undefined, { renderer: "canvas" });
+    const update = () => chart.setOption(buildHalfYearMonthlyChartOption(buckets, readTrendChartTheme(container)), true);
+    update();
+    const resizeObserver = new ResizeObserver(() => chart.resize());
+    resizeObserver.observe(container);
+    const themeObserver = new MutationObserver(update);
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => {
+      resizeObserver.disconnect();
+      themeObserver.disconnect();
+      chart.dispose();
+    };
+  }, [buckets]);
+
+  return <div ref={containerRef} className="half-year-month-chart" role="img" aria-label="最近半年总用量月度趋势" />;
+}
+
+export function buildSevenDayChartOption(
+  buckets: DailyTokenBucket[],
+  theme: TrendChartTheme,
+): echarts.EChartsCoreOption {
+  const hasBreakdown = buckets.some((bucket) => bucket.inputTokens != null);
+  const makeTokenSeries = (name: string, color: string, data: (number | null)[]) => ({
+    name,
+    type: "line" as const,
+    data,
+    smooth: 0.35,
+    symbol: "circle",
+    symbolSize: 5,
+    showSymbol: false,
+    connectNulls: false,
+    lineStyle: { color, width: 2 },
+    itemStyle: { color },
+    emphasis: { focus: "series" as const, showSymbol: true },
+    tooltip: { valueFormatter: (value: unknown) => formatTokens(Number(value)) },
   });
+  const series = hasBreakdown
+    ? [
+        makeTokenSeries("输入", "#5B8FF9", buckets.map((bucket) => bucket.inputTokens == null
+          ? null
+          : Math.max(0, bucket.inputTokens - (bucket.cachedInputTokens ?? 0)))),
+        makeTokenSeries("输出", "#5AD8A6", buckets.map((bucket) => bucket.outputTokens)),
+        makeTokenSeries("缓存读取", "#F6BD16", buckets.map((bucket) => bucket.cachedInputTokens)),
+        ...(buckets.some((bucket) => (bucket.reasoningOutputTokens ?? 0) > 0)
+          ? [makeTokenSeries("推理输出", "#E8684A", buckets.map((bucket) => bucket.reasoningOutputTokens))]
+          : []),
+        {
+          name: "缓存命中率",
+          type: "line" as const,
+          yAxisIndex: 1,
+          data: buckets.map((bucket) => {
+            if (bucket.inputTokens == null || bucket.inputTokens <= 0) return null;
+            return Math.min(100, Math.max(0, ((bucket.cachedInputTokens ?? 0) / bucket.inputTokens) * 100));
+          }),
+          smooth: 0.35,
+          symbol: "circle",
+          symbolSize: 5,
+          showSymbol: false,
+          connectNulls: false,
+          lineStyle: { color: "#8B95A7", width: 1.8, type: "dashed" as const },
+          itemStyle: { color: "#8B95A7" },
+          emphasis: { focus: "series" as const, showSymbol: true },
+          tooltip: { valueFormatter: (value: unknown) => `${Number(value).toFixed(1)}%` },
+        },
+      ]
+    : [makeTokenSeries("总用量", "#5B8FF9", buckets.map((bucket) => bucket.tokens))];
 
-  const areaPath = `
-    M ${padding.left},${padding.top + chartH}
-    L ${points.join(" L ")}
-    L ${padding.left + chartW},${padding.top + chartH}
-    Z
-  `;
+  return {
+    animationDuration: 350,
+    color: series.map((item) => item.itemStyle.color),
+    grid: { top: 30, right: hasBreakdown ? 34 : 8, bottom: 18, left: 38, containLabel: false },
+    legend: {
+      top: 0,
+      left: 0,
+      right: 0,
+      type: "scroll",
+      itemWidth: 14,
+      itemHeight: 6,
+      itemGap: 10,
+      textStyle: { color: theme.muted, fontSize: 9 },
+      pageTextStyle: { color: theme.muted, fontSize: 9 },
+      pageIconColor: theme.text,
+      pageIconInactiveColor: theme.grid,
+    },
+    tooltip: {
+      trigger: "axis",
+      confine: true,
+      backgroundColor: theme.tooltipBackground,
+      borderColor: theme.tooltipBorder,
+      borderWidth: 1,
+      textStyle: { color: theme.text, fontSize: 11 },
+      axisPointer: { type: "line", lineStyle: { color: theme.grid, type: "dashed" } },
+    },
+    xAxis: {
+      type: "category",
+      boundaryGap: false,
+      data: buckets.map((bucket) => bucket.label),
+      axisLine: { lineStyle: { color: theme.grid } },
+      axisTick: { show: false },
+      axisLabel: { color: theme.muted, fontSize: 9, interval: 0 },
+    },
+    yAxis: [
+      {
+        type: "value",
+        min: 0,
+        splitNumber: 2,
+        axisLabel: { color: theme.muted, fontSize: 9, formatter: tokenAxisLabel },
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { lineStyle: { color: theme.grid, type: "dashed" } },
+      },
+      {
+        type: "value",
+        min: 0,
+        max: 100,
+        interval: 50,
+        show: hasBreakdown,
+        axisLabel: { color: theme.muted, fontSize: 9, formatter: "{value}%" },
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { show: false },
+      },
+    ],
+    series,
+  };
+}
 
-  return (
-    <div className="line-chart-container">
-      <svg className="line-chart-svg" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-        <defs>
-          <linearGradient id="areaGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#7BA0FF" stopOpacity="0.4" />
-            <stop offset="100%" stopColor="#7BA0FF" stopOpacity="0.02" />
-          </linearGradient>
-        </defs>
-        <path d={areaPath} fill="url(#areaGradient)" />
-        <polyline
-          points={points.join(" ")}
-          fill="none"
-          stroke="#7BA0FF"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        {values.map((v, i) => {
-          const x = padding.left + (i / Math.max(values.length - 1, 1)) * chartW;
-          const y = padding.top + chartH - (v / max) * chartH;
-          return (
-            <circle key={i} cx={x} cy={y} r="3.5" fill="#2866F7" stroke="white" strokeWidth="1.5" />
-          );
-        })}
-        {buckets.map((b, i) => {
-          const x = padding.left + (i / Math.max(values.length - 1, 1)) * chartW;
-          return (
-            <text
-              key={i}
-              x={x}
-              y={height - 4}
-              textAnchor="middle"
-              fontSize="9"
-              fill="var(--text-tertiary)"
-            >
-              {b.label}
-            </text>
-          );
-        })}
-      </svg>
-    </div>
-  );
+function SevenDayLineChart({ buckets }: { buckets: DailyTokenBucket[] }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const chart = echarts.init(container, undefined, { renderer: "canvas" });
+    const update = () => {
+      const styles = getComputedStyle(container);
+      const read = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
+      chart.setOption(buildSevenDayChartOption(buckets, {
+        text: read("--text-primary", "#f5f5f7"),
+        muted: read("--text-tertiary", "#98989d"),
+        grid: read("--surface-card-border", "rgba(142, 142, 147, 0.22)"),
+        tooltipBackground: read("--surface-section-bg", "rgba(32, 32, 35, 0.94)"),
+        tooltipBorder: read("--surface-section-border", "rgba(255, 255, 255, 0.16)"),
+      }), true);
+    };
+    update();
+    const resizeObserver = new ResizeObserver(() => chart.resize());
+    resizeObserver.observe(container);
+    const themeObserver = new MutationObserver(update);
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => {
+      resizeObserver.disconnect();
+      themeObserver.disconnect();
+      chart.dispose();
+    };
+  }, [buckets]);
+
+  return <div ref={containerRef} className="line-chart-container" role="img" aria-label="最近 7 日 Token 类型与缓存命中率趋势" />;
 }
 
 /* ========================================================

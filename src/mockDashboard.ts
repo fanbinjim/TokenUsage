@@ -30,25 +30,43 @@ function pricedUsage(inputTokens: number, cachedInputTokens: number, outputToken
 }
 
 function recentBuckets(now: Date): DailyTokenBucket[] {
-  const values = [8_400_000, 10_900_000, 13_500_000, 9_800_000, 15_200_000, 12_100_000, 18_800_000];
-  return values.map((tokens, index) => {
+  const values = [
+    [8_400_000, 3_200_000, 1_900_000, 2_400_000, 900_000],
+    [10_900_000, 4_100_000, 2_600_000, 3_100_000, 1_100_000],
+    [13_500_000, 5_000_000, 3_800_000, 3_500_000, 1_200_000],
+    [9_800_000, 3_900_000, 2_100_000, 2_800_000, 1_000_000],
+    [15_200_000, 5_700_000, 4_200_000, 4_000_000, 1_300_000],
+    [12_100_000, 4_500_000, 3_100_000, 3_500_000, 1_000_000],
+    [18_800_000, 7_000_000, 5_200_000, 4_900_000, 1_700_000],
+  ];
+  return values.map(([tokens, inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens], index) => {
     const date = new Date(now.getTime() - (values.length - 1 - index) * DAY);
     return {
       id: date.toISOString().slice(0, 10),
       label: `${date.getMonth() + 1}/${date.getDate()}`,
       tokens,
+      inputTokens,
+      cachedInputTokens,
+      outputTokens,
+      reasoningOutputTokens,
     };
   });
 }
 
 function heatmapDays(now: Date): DailyTokenBucket[] {
-  const values = [2, 8, 0, 11, 4, 15, 9, 6, 12, 3, 0, 14, 10, 7, 18, 5, 13, 9, 16, 4, 11, 20, 8, 15, 6, 18, 12, 19];
-  return values.map((millions, index) => {
-    const date = new Date(now.getTime() - (values.length - 1 - index) * DAY);
+  const pattern = [2, 8, 0, 11, 4, 15, 9, 6, 12, 3, 0, 14, 10, 7, 18, 5, 13, 9, 16, 4, 11, 20, 8, 15, 6, 18, 12, 19];
+  const dayCount = 182;
+  return Array.from({ length: dayCount }, (_, index) => {
+    const millions = pattern[index % pattern.length];
+    const date = new Date(now.getTime() - (dayCount - 1 - index) * DAY);
     return {
       id: date.toISOString().slice(0, 10),
       label: `${date.getMonth() + 1}/${date.getDate()}`,
       tokens: millions * 1_000_000,
+      inputTokens: null,
+      cachedInputTokens: null,
+      outputTokens: null,
+      reasoningOutputTokens: null,
     };
   });
 }

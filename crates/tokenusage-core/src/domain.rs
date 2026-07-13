@@ -162,6 +162,10 @@ pub struct DailyTokenBucket {
     pub id: String,
     pub label: String,
     pub tokens: i64,
+    pub input_tokens: Option<i64>,
+    pub cached_input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub reasoning_output_tokens: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

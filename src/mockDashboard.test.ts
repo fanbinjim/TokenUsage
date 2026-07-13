@@ -11,7 +11,8 @@ describe("main dashboard mock mode data", () => {
     expect(runtime.snapshot.secondary?.remainingPercent).toBe(65);
     expect(runtime.snapshot.local?.recentThreads).toHaveLength(6);
     expect(runtime.snapshot.local?.dailyBuckets).toHaveLength(7);
-    expect(runtime.snapshot.local?.usageTrend?.days).toHaveLength(28);
+    expect(runtime.snapshot.local?.dailyBuckets[0]).toMatchObject({ inputTokens: expect.any(Number), cachedInputTokens: expect.any(Number), outputTokens: expect.any(Number) });
+    expect(runtime.snapshot.local?.usageTrend?.days).toHaveLength(182);
     expect(runtime.snapshot.local?.projects.length).toBeGreaterThan(0);
     expect(runtime.snapshot.local?.skillUsage.length).toBeGreaterThan(0);
   });

@@ -47,6 +47,10 @@ export interface DailyTokenBucket {
   id: string;
   label: string;
   tokens: number;
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  outputTokens: number | null;
+  reasoningOutputTokens: number | null;
 }
 
 export interface UsageTrend {
