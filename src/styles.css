@@ -782,7 +782,30 @@ select, input {
   top: 50%;
   transform: translateY(-50%);
   left: 0;
+  overflow: hidden;
   transition: width 0.5s ease-out;
+}
+
+.wool-progress-fill::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -60%;
+  width: 46%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.48), transparent);
+  animation: wool-progress-flow 2.6s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes wool-progress-flow {
+  to { transform: translateX(350%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wool-progress-fill::after {
+    animation: none;
+  }
 }
 
 .wool-progress-marker {

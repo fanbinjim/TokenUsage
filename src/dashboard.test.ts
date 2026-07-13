@@ -41,6 +41,15 @@ describe("dashboard display and layout guards", () => {
     expect(woolProgressPercent(WOOL_MONTHLY_VALUE_CAP * 2)).toBe(100);
   });
 
+  it("adds a left-to-right flow effect to the wool progress fill", () => {
+    const styles = readFileSync(resolve(process.cwd(), "src", "styles.css"), "utf8").replace(/\r\n/g, "\n");
+
+    expect(styles).toContain(".wool-progress-fill::after {");
+    expect(styles).toContain("animation: wool-progress-flow 2.6s linear infinite;");
+    expect(styles).toContain("@keyframes wool-progress-flow {");
+    expect(styles).toContain("@media (prefers-reduced-motion: reduce)");
+  });
+
   it("keeps the half-year heatmap geometry fixed when the window resizes", () => {
     const styles = readFileSync(resolve(process.cwd(), "src", "styles.css"), "utf8").replace(/\r\n/g, "\n");
     expect(styles).toContain("--heatmap-grid-width: 402px");
