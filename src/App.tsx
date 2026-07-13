@@ -240,8 +240,8 @@ function DualQuotaRing({ primary, secondary }: { primary: RateWindow | null; sec
   const size = 160;
   const cx = size / 2;
   const cy = size / 2;
-  const outerR = 62;
-  const innerR = 42;
+  const outerR = 65;
+  const innerR = 46;
   const strokeW = 14;
 
   const outerPct = dashboardQuotaPercent(primary);
