@@ -1,6 +1,6 @@
 # TokenUsage
 
-TokenUsage 是一个本地优先的 Windows 桌面应用，用于查看 Codex 的账号额度与本机 Token 使用情况。它是参考 `ref/codexU` 重写的跨平台项目：Windows 为首发平台，Linux 将复用 Rust 数据层和 React UI。
+TokenUsage 是一个本地优先的 Windows 桌面应用，用于查看 Codex 的账号额度与本机 Token 使用情况。它是参考 `codexU` 重写的跨平台项目：Windows 为首发平台，Linux 将复用 Rust 数据层和 React UI。
 
 ## 当前进度
 
@@ -72,4 +72,12 @@ npm exec tauri build -- --features custom-protocol --no-bundle
 ## 文档
 
 - [01_PLAN.md](01_PLAN.md)：Windows 移植与 Linux 预留的完整实施计划。
-- [02_UI_REFERENCE_COMPARISON.md](02_UI_REFERENCE_COMPARISON.md)：当前 Windows 版与 `ref/codexU` 截图和设计规范的视觉对比、重构顺序与验收标准。
+- [02_UI_REFERENCE_COMPARISON.md](02_UI_REFERENCE_COMPARISON.md)：当前 Windows 版与 `codexU` 截图和设计规范的视觉对比、重构顺序与验收标准。
+
+## 致谢
+
+感谢 [shanggqm/codexU](https://github.com/shanggqm/codexU) 项目。本项目是 `codexU` 的 Windows 端移植实现，基于其产品设计、功能思路与视觉规范完成适配与开发。
+
+## 开源协议
+
+本项目采用 [MIT License](LICENSE)。

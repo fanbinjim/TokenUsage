@@ -42,7 +42,7 @@ describe("dashboard display and layout guards", () => {
   });
 
   it("keeps the half-year heatmap geometry fixed when the window resizes", () => {
-    const styles = readFileSync(resolve(process.cwd(), "src", "styles.css"), "utf8");
+    const styles = readFileSync(resolve(process.cwd(), "src", "styles.css"), "utf8").replace(/\r\n/g, "\n");
     expect(styles).toContain("--heatmap-grid-width: 402px");
     expect(styles).toContain("--heatmap-content-width: 421px");
     expect(styles).toContain("--half-year-card-width: 447px");
