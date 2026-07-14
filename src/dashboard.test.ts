@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildHalfYearMonthlyChartOption, buildHalfYearMonthlyUsage, buildHeatmapCalendar, buildSevenDayChartOption, dashboardQuotaPercent, safeThreadLabel, shortCwd, taskCardId, WOOL_MONTHLY_VALUE_CAP, woolProgressPercent } from "./App";
+import { currentMonthPlanWindow, findSevenDayQuotaWindow, quotaResetRemainingFraction } from "./quota";
 import type { DailyTokenBucket } from "./types";
 
 describe("dashboard display and layout guards", () => {
@@ -157,5 +158,18 @@ describe("dashboard display and layout guards", () => {
     expect(dashboardQuotaPercent({ usedPercent: 0, remainingPercent: -1, windowDurationMins: 300, resetsAt: null })).toBe(100);
     expect(dashboardQuotaPercent({ usedPercent: 0, remainingPercent: 101, windowDurationMins: 300, resetsAt: null })).toBe(100);
     expect(dashboardQuotaPercent({ usedPercent: 42, remainingPercent: 58.4, windowDurationMins: 300, resetsAt: null })).toBe(58);
+  });
+
+  it("uses the calendar month outside ring and identifies a 7-day API window by duration", () => {
+    const monthly = currentMonthPlanWindow(new Date(2026, 6, 16, 12));
+    expect(dashboardQuotaPercent(monthly)).toBe(50);
+    expect(monthly.resetsAt).toBe(new Date(2026, 7, 1).toISOString());
+
+    const sevenDay = { usedPercent: 9, remainingPercent: 91, windowDurationMins: 10_080, resetsAt: "2026-07-20T01:45:01.000Z" };
+    const fiveHour = { usedPercent: 50, remainingPercent: 50, windowDurationMins: 300, resetsAt: "2026-07-14T01:00:00.000Z" };
+    expect(findSevenDayQuotaWindow(sevenDay, fiveHour)).toBe(sevenDay);
+    expect(findSevenDayQuotaWindow(fiveHour, null)).toBeNull();
+    expect(quotaResetRemainingFraction({ ...sevenDay, resetsAt: "2026-07-17T13:00:00.000Z" }, Date.parse("2026-07-14T01:00:00.000Z"))).toBeCloseTo(0.5, 6);
+    expect(quotaResetRemainingFraction({ ...sevenDay, resetsAt: null })).toBeNull();
   });
 });

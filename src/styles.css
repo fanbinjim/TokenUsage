@@ -499,6 +499,13 @@ select, input {
   stroke: url(#innerGradient);
 }
 
+.quota-rings .ring-reset-marker {
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 2.5px;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.35));
+}
+
 .quota-rings-center {
   position: absolute;
   inset: 0;

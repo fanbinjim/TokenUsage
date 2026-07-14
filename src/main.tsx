@@ -14,10 +14,10 @@ const isTaskbarPreview = isDevelopment && previewParams.has("taskbar-preview");
 const isMainMockPreview = isDevelopment && previewParams.get("mock") === "main";
 const previewResetMinutes = Math.max(0, Number(previewParams.get("reset-minutes")) || 222);
 const taskbarPreview = isTaskbarPreview ? {
-  fiveHour: Math.max(0, Math.min(100, Number(previewParams.get("five-hour")) || 65)),
+  monthly: Math.max(0, Math.min(100, Number(previewParams.get("monthly")) || 65)),
   sevenDay: Math.max(0, Math.min(100, Number(previewParams.get("seven-day")) || 83)),
   resetsAt: new Date(Date.now() + previewResetMinutes * 60_000).toISOString(),
-  windowDurationMins: 300,
+  windowDurationMins: 10_080,
 } : undefined;
 
 document.documentElement.dataset.platform = /Windows/i.test(navigator.userAgent) ? "windows" : "other";

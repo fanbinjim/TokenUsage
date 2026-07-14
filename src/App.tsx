@@ -4,8 +4,9 @@ import * as echarts from "echarts/core";
 import { LineChart } from "echarts/charts";
 import { GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { formatTokens, formatReset } from "./format";
+import { formatDaysHours, formatTokens, formatReset } from "./format";
 import { createMockDashboardSnapshot, MOCK_SETTINGS } from "./mockDashboard";
+import { currentMonthPlanWindow, findSevenDayQuotaWindow, quotaResetRemainingFraction } from "./quota";
 import { useUsageStore } from "./store";
 import type {
   AppSettings,
@@ -251,12 +252,18 @@ function DualQuotaRing({ primary, secondary }: { primary: RateWindow | null; sec
   const innerR = 46;
   const strokeW = 14;
 
-  const outerPct = dashboardQuotaPercent(primary);
-  const innerPct = dashboardQuotaPercent(secondary);
+  const monthlyWindow = currentMonthPlanWindow();
+  const sevenDayWindow = findSevenDayQuotaWindow(primary, secondary);
+  const sevenDayResetFraction = quotaResetRemainingFraction(sevenDayWindow);
+  const outerPct = dashboardQuotaPercent(monthlyWindow);
+  const innerPct = dashboardQuotaPercent(sevenDayWindow);
   const outerFrac = outerPct / 100;
   const innerFrac = innerPct / 100;
   const outerCirc = 2 * Math.PI * outerR;
   const innerCirc = 2 * Math.PI * innerR;
+  const resetMarkerAngle = (sevenDayResetFraction ?? 0) * Math.PI * 2;
+  const resetMarkerStartRadius = innerR - strokeW / 2 - 2;
+  const resetMarkerEndRadius = innerR + strokeW / 2 + 3;
 
   return (
     <div className="quota-rings">
@@ -293,17 +300,25 @@ function DualQuotaRing({ primary, secondary }: { primary: RateWindow | null; sec
             strokeDashoffset={innerCirc * (1 - innerFrac)}
           />
         )}
+        {sevenDayResetFraction != null && (
+          <line
+            className="ring-reset-marker"
+            x1={cx + Math.cos(resetMarkerAngle) * resetMarkerStartRadius}
+            y1={cy + Math.sin(resetMarkerAngle) * resetMarkerStartRadius}
+            x2={cx + Math.cos(resetMarkerAngle) * resetMarkerEndRadius}
+            y2={cy + Math.sin(resetMarkerAngle) * resetMarkerEndRadius}
+          />
+        )}
       </svg>
       <div className="quota-rings-center">
-        <div className="ring-label primary" aria-label={`5 hours ${outerPct}% remaining`}>
-          <span className="tag">5h</span>
+        <div className="ring-label primary" aria-label={`本月套餐剩余 ${outerPct}%`}>
+          <span className="tag">本月</span>
           <span className="pct">{outerPct}%</span>
         </div>
-        <div className="ring-label secondary" aria-label={`7 days ${innerPct}% remaining`}>
+        <div className="ring-label secondary" aria-label={`7 天额度剩余 ${innerPct}%`}>
           <span className="tag">7d</span>
           <span className="pct">{innerPct}%</span>
         </div>
-        <div className="remaining-label">剩余</div>
       </div>
     </div>
   );
@@ -314,19 +329,21 @@ function DualQuotaRing({ primary, secondary }: { primary: RateWindow | null; sec
    ======================================================== */
 
 function QuotaResetSummary({ primary, secondary }: { primary: RateWindow | null; secondary: RateWindow | null }) {
+  const monthlyWindow = currentMonthPlanWindow();
+  const sevenDayWindow = findSevenDayQuotaWindow(primary, secondary);
   return (
     <div className="quota-reset-summary">
       <div className="quota-reset-line">
         <span className="dot primary" />
-        <span className="title primary">5h</span>
-        <span className="label">重置</span>
-        <span className="time">{formatReset(primary?.resetsAt ?? null)}</span>
+        <span className="title primary">本月</span>
+        <span className="label">结束</span>
+        <span className="time">{formatDaysHours(monthlyWindow.resetsAt)}</span>
       </div>
       <div className="quota-reset-line">
         <span className="dot secondary" />
         <span className="title secondary">7d</span>
         <span className="label">重置</span>
-        <span className="time">{formatReset(secondary?.resetsAt ?? null)}</span>
+        <span className="time">{formatReset(sevenDayWindow?.resetsAt ?? null)}</span>
       </div>
     </div>
   );

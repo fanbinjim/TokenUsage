@@ -116,17 +116,12 @@ export function createMockDashboardSnapshot(now = new Date()): MultiRuntimeUsage
           limitId: "codex.primary",
           limitName: "Codex",
           primary: {
-            usedPercent: 42,
-            remainingPercent: 58,
-            windowDurationMins: 300,
-            resetsAt: isoAt(now, 257 * MINUTE),
-          },
-          secondary: {
             usedPercent: 35,
             remainingPercent: 65,
             windowDurationMins: 10_080,
             resetsAt: isoAt(now, 147 * 60 * MINUTE + 18 * MINUTE),
           },
+          secondary: null,
           cloudLifetimeTokens: 1_105_200_000,
           local: {
             lifetimeTokens: lifetime.tokens.totalTokens,

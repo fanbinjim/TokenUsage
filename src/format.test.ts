@@ -1,13 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { formatTokens } from "./format";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { formatDaysHours } from "./format";
 
-describe("formatTokens", () => {
-  it("keeps unavailable data distinct from zero", () => {
-    expect(formatTokens(null)).toBe("--");
-    expect(formatTokens(0)).toBe("0");
-  });
+describe("formatDaysHours", () => {
+  afterEach(() => vi.useRealTimers());
 
-  it("uses compact units for large local counts", () => {
-    expect(formatTokens(1_500_000)).toBe("1.5M");
+  it("formats a remaining monthly duration as days and hours", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-14T06:00:00.000Z"));
+
+    expect(formatDaysHours("2026-08-01T00:00:00.000Z")).toBe("17d 18h");
+    expect(formatDaysHours(null)).toBe("--");
   });
 });

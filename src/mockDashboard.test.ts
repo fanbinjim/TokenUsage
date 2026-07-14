@@ -7,8 +7,8 @@ describe("main dashboard mock mode data", () => {
     const runtime = snapshot.runtimes[0];
 
     expect(runtime).toMatchObject({ scope: "codex", displayName: "Codex", status: "available" });
-    expect(runtime.snapshot.primary?.remainingPercent).toBe(58);
-    expect(runtime.snapshot.secondary?.remainingPercent).toBe(65);
+    expect(runtime.snapshot.primary).toMatchObject({ remainingPercent: 65, windowDurationMins: 10_080 });
+    expect(runtime.snapshot.secondary).toBeNull();
     expect(runtime.snapshot.local?.recentThreads).toHaveLength(6);
     expect(runtime.snapshot.local?.dailyBuckets).toHaveLength(7);
     expect(runtime.snapshot.local?.dailyBuckets[0]).toMatchObject({ inputTokens: expect.any(Number), cachedInputTokens: expect.any(Number), outputTokens: expect.any(Number) });

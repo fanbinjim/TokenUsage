@@ -3,104 +3,66 @@ import { describe, expect, it } from "vitest";
 import TaskbarWidget, {
   taskbarQuotaLevel,
   taskbarQuotaValues,
-  taskbarFallbackResetWindow,
   taskbarResetCountdown,
   taskbarResetLevel,
 } from "./TaskbarWidget";
-import type { MultiRuntimeUsageSnapshot } from "./types";
+import type { MultiRuntimeUsageSnapshot, RateWindow } from "./types";
 
-describe("taskbar quota", () => {
-  it("renders full quota fallbacks until a live snapshot is available", () => {
-    const markup = renderToStaticMarkup(<TaskbarWidget />);
-    expect(markup.match(/class="taskbar-widget-value">100%<\/span>/g)).toHaveLength(2);
-    expect(markup.match(/scaleX\(1\)/g)).toHaveLength(2);
-    expect(markup).not.toContain("quota-unavailable");
-  });
-
-  it("uses the selected runtime's live remaining quota", () => {
-    const snapshot: MultiRuntimeUsageSnapshot = {
-      schemaVersion: 1,
-      refreshedAt: "2026-07-12T12:00:00Z",
-      runtimes: [
-        {
-          scope: "codex",
-          displayName: "Codex",
-          status: "available",
-          snapshot: {
-            refreshedAt: "2026-07-12T12:00:00Z",
-            account: null,
-            limitId: null,
-            limitName: null,
-            primary: { usedPercent: 35, windowDurationMins: 300, resetsAt: null, remainingPercent: 65 },
-            secondary: { usedPercent: 17, windowDurationMins: 10080, resetsAt: null, remainingPercent: 83 },
-            cloudLifetimeTokens: null,
-            local: null,
-            diagnostics: [],
-          },
-        },
-        {
-          scope: "claudeCode",
-          displayName: "Claude Code",
-          status: "available",
-          snapshot: {
-            refreshedAt: "2026-07-12T12:00:00Z",
-            account: null,
-            limitId: null,
-            limitName: null,
-            primary: { usedPercent: 58, windowDurationMins: 300, resetsAt: null, remainingPercent: 42 },
-            secondary: { usedPercent: 82, windowDurationMins: 10080, resetsAt: null, remainingPercent: 18 },
-            cloudLifetimeTokens: null,
-            local: null,
-            diagnostics: [],
-          },
-        },
-      ],
-    };
-
-    expect(taskbarQuotaValues(snapshot, "claudeCode")).toMatchObject({ fiveHour: 42, sevenDay: 18 });
-    expect(taskbarQuotaValues(snapshot, "codex")).toMatchObject({ fiveHour: 65, sevenDay: 83 });
-  });
-
-  it("uses full quota values when quota data is missing", () => {
-    const snapshot: MultiRuntimeUsageSnapshot = {
-      schemaVersion: 1,
-      refreshedAt: "2026-07-12T12:00:00Z",
-      runtimes: [{
+function runtimeSnapshot(primary: RateWindow | null, secondary: RateWindow | null): MultiRuntimeUsageSnapshot {
+  return {
+    schemaVersion: 1,
+    refreshedAt: "2026-07-12T12:00:00Z",
+    runtimes: [
+      {
         scope: "codex",
         displayName: "Codex",
-        status: "localOnly",
+        status: "available",
         snapshot: {
           refreshedAt: "2026-07-12T12:00:00Z",
           account: null,
           limitId: null,
           limitName: null,
-          primary: null,
-          secondary: null,
+          primary,
+          secondary,
           cloudLifetimeTokens: null,
           local: null,
           diagnostics: [],
         },
-      }],
-    };
+      },
+    ],
+  };
+}
 
-    expect(taskbarQuotaValues(snapshot, "codex")).toEqual({ fiveHour: 100, sevenDay: 100, fiveHourWindow: null });
+describe("taskbar quota", () => {
+  it("renders the monthly cycle and marks an unavailable 7-day quota", () => {
+    const markup = renderToStaticMarkup(<TaskbarWidget />);
+    expect(markup).toContain("本月");
+    expect(markup).toContain("7d");
+    expect(markup).toContain("quota-unavailable");
   });
 
-  it("falls back to the next local noon or midnight reset", () => {
-    const morning = new Date(2026, 6, 12, 8, 15, 0).getTime();
-    const morningReset = taskbarFallbackResetWindow(morning);
-    expect(morningReset.windowDurationMins).toBe(720);
-    expect(morningReset.remainingPercent).toBe(100);
-    expect(new Date(morningReset.resetsAt!)).toEqual(new Date(2026, 6, 12, 12, 0, 0));
-    expect(taskbarResetCountdown(morningReset, morning)?.resetTime).toBe("12:00");
+  it("uses the calendar month and finds a 7-day quota in either API slot", () => {
+    const now = new Date(2026, 6, 16, 12).getTime();
+    const fiveHour = { usedPercent: 35, windowDurationMins: 300, resetsAt: null, remainingPercent: 65 };
+    const sevenDay = { usedPercent: 17, windowDurationMins: 10_080, resetsAt: null, remainingPercent: 83 };
 
-    const afternoon = new Date(2026, 6, 12, 17, 30, 0).getTime();
-    const afternoonReset = taskbarFallbackResetWindow(afternoon);
-    expect(new Date(afternoonReset.resetsAt!)).toEqual(new Date(2026, 6, 13, 0, 0, 0));
-    expect(taskbarResetCountdown(afternoonReset, afternoon)?.resetTime).toBe("00:00");
+    const withSecondaryWindow = taskbarQuotaValues(runtimeSnapshot(fiveHour, { ...sevenDay, resetsAt: new Date(now + 3.5 * 24 * 60 * 60_000).toISOString() }), "codex", now);
+    expect(withSecondaryWindow).toMatchObject({
+      monthly: 50,
+      sevenDay: 83,
+    });
+    expect(withSecondaryWindow.sevenDayResetFraction).toBeCloseTo(0.5, 6);
+    expect(taskbarQuotaValues(runtimeSnapshot(sevenDay, null), "codex", now)).toMatchObject({
+      monthly: 50,
+      sevenDay: 83,
+      sevenDayWindow: sevenDay,
+    });
+  });
 
-    const noon = new Date(2026, 6, 12, 12, 0, 0).getTime();
-    expect(new Date(taskbarFallbackResetWindow(noon).resetsAt!)).toEqual(new Date(2026, 6, 13, 0, 0, 0));
+  it("keeps the 7-day quota unavailable when the API does not return it", () => {
+    const now = new Date(2026, 6, 16, 12).getTime();
+    const values = taskbarQuotaValues(runtimeSnapshot(null, null), "codex", now);
+    expect(values).toMatchObject({ monthly: 50, sevenDay: null, sevenDayWindow: null, sevenDayResetFraction: null });
   });
 
   it("maps quota percentages to non-overlapping warning ranges", () => {
@@ -114,12 +76,12 @@ describe("taskbar quota", () => {
     expect(taskbarQuotaLevel(100)).toBe("healthy");
   });
 
-  it("calculates the countdown from the server reset timestamp", () => {
+  it("calculates the countdown from the 7-day server reset timestamp", () => {
     const now = Date.parse("2026-07-12T08:00:00Z");
     const countdown = taskbarResetCountdown({
       usedPercent: 35,
       remainingPercent: 65,
-      windowDurationMins: 300,
+      windowDurationMins: 10_080,
       resetsAt: "2026-07-12T11:42:00Z",
     }, now);
 
@@ -128,11 +90,11 @@ describe("taskbar quota", () => {
       level: "healthy",
       remainingMinutes: 222,
     });
-    expect(countdown?.progress).toBeCloseTo(222 / 300, 5);
+    expect(countdown?.progress).toBeCloseTo(222 / 10_080, 5);
     expect(countdown?.resetTime).toMatch(/^\d{2}:\d{2}$/);
   });
 
-  it("uses urgent colors as the five-hour reset approaches", () => {
+  it("uses urgent colors as a quota reset approaches", () => {
     expect(taskbarResetLevel(181)).toBe("healthy");
     expect(taskbarResetLevel(180)).toBe("info");
     expect(taskbarResetLevel(90)).toBe("warning");
@@ -145,7 +107,7 @@ describe("taskbar quota", () => {
     expect(taskbarResetCountdown({
       usedPercent: 35,
       remainingPercent: 65,
-      windowDurationMins: 300,
+      windowDurationMins: 10_080,
       resetsAt: "not-a-date",
     })).toBeNull();
   });

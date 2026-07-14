@@ -2,15 +2,17 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./api";
 import type { AppSettings, MultiRuntimeUsageSnapshot, RateWindow, RuntimeScope } from "./types";
+import { currentMonthPlanWindow, findSevenDayQuotaWindow, quotaResetRemainingFraction } from "./quota";
 import { useUsageStore } from "./store";
 import "./taskbar-widget.css";
 
 export type TaskbarQuotaLevel = "danger" | "warning" | "info" | "healthy";
 
 export interface TaskbarQuotaValues {
-  fiveHour: number | null;
+  monthly: number;
   sevenDay: number | null;
-  fiveHourWindow: RateWindow | null;
+  sevenDayWindow: RateWindow | null;
+  sevenDayResetFraction: number | null;
 }
 
 export type TaskbarResetLevel = "danger" | "warning" | "info" | "healthy";
@@ -38,31 +40,15 @@ function validRemainingPercent(window: RateWindow | null | undefined): number | 
 export function taskbarQuotaValues(
   snapshot: MultiRuntimeUsageSnapshot | null,
   selectedScope: RuntimeScope | undefined,
+  nowMs = Date.now(),
 ): TaskbarQuotaValues {
   const runtime = snapshot?.runtimes.find((item) => item.scope === selectedScope) ?? snapshot?.runtimes[0];
+  const sevenDayWindow = findSevenDayQuotaWindow(runtime?.snapshot.primary, runtime?.snapshot.secondary);
   return {
-    fiveHour: validRemainingPercent(runtime?.snapshot.primary) ?? 100,
-    sevenDay: validRemainingPercent(runtime?.snapshot.secondary) ?? 100,
-    fiveHourWindow: runtime?.snapshot.primary ?? null,
-  };
-}
-
-export function taskbarFallbackResetWindow(nowMs = Date.now()): RateWindow {
-  const now = new Date(nowMs);
-  const nextReset = new Date(nowMs);
-  nextReset.setMinutes(0, 0, 0);
-  if (now.getHours() < 12) {
-    nextReset.setHours(12);
-  } else {
-    nextReset.setDate(nextReset.getDate() + 1);
-    nextReset.setHours(0);
-  }
-
-  return {
-    usedPercent: 0,
-    remainingPercent: 100,
-    windowDurationMins: 12 * 60,
-    resetsAt: nextReset.toISOString(),
+    monthly: validRemainingPercent(currentMonthPlanWindow(new Date(nowMs))) ?? 100,
+    sevenDay: validRemainingPercent(sevenDayWindow),
+    sevenDayWindow,
+    sevenDayResetFraction: quotaResetRemainingFraction(sevenDayWindow, nowMs),
   };
 }
 
@@ -102,10 +88,11 @@ export function taskbarResetCountdown(
   };
 }
 
-function QuotaRow({ label, percent, tone }: {
+function QuotaRow({ label, percent, tone, resetFraction }: {
   label: string;
   percent: number | null;
   tone: "primary" | "secondary";
+  resetFraction?: number | null;
 }) {
   const normalizedPercent = percent == null ? 0 : Math.max(0, Math.min(100, percent));
   const level = percent == null ? null : taskbarQuotaLevel(normalizedPercent);
@@ -117,6 +104,9 @@ function QuotaRow({ label, percent, tone }: {
       <span className="taskbar-widget-label">{label}</span>
       <span className="taskbar-widget-track">
         <span className="taskbar-widget-fill" style={{ transform: `scaleX(${normalizedPercent / 100})` }} />
+        {resetFraction != null && (
+          <span className="taskbar-widget-reset-marker" style={{ left: `${resetFraction * 100}%` }} />
+        )}
       </span>
       <span className="taskbar-widget-value">{percent == null ? "--" : `${Math.round(normalizedPercent)}%`}</span>
     </div>
@@ -124,12 +114,11 @@ function QuotaRow({ label, percent, tone }: {
 }
 
 function ResetCountdown({ window, nowMs }: { window: RateWindow | null; nowMs: number }) {
-  const resetWindow = window?.resetsAt ? window : taskbarFallbackResetWindow(nowMs);
-  const countdown = taskbarResetCountdown(resetWindow, nowMs);
+  const countdown = taskbarResetCountdown(window, nowMs);
   const progress = countdown ? countdown.progress * 100 : 0;
   const tooltip = countdown
-    ? `5h 额度将在 ${countdown.resetTime} 重置，剩余 ${countdown.label}`
-    : "5h 重置时间不可用";
+    ? `7d 额度将在 ${countdown.resetTime} 重置，剩余 ${countdown.label}`
+    : "7d 重置时间不可用";
 
   return (
     <div
@@ -154,7 +143,7 @@ function ResetCountdown({ window, nowMs }: { window: RateWindow | null; nowMs: n
 }
 
 export interface TaskbarWidgetPreview {
-  fiveHour: number;
+  monthly: number;
   sevenDay: number;
   resetsAt: string;
   windowDurationMins?: number;
@@ -164,14 +153,20 @@ export default function TaskbarWidget({ preview }: { preview?: TaskbarWidgetPrev
   const { bootstrap, setSnapshot, setSettings, settings, snapshot } = useUsageStore();
   const liveQuota = taskbarQuotaValues(snapshot, settings?.selectedRuntime);
   const quota: TaskbarQuotaValues = preview ? {
-    fiveHour: preview.fiveHour,
+    monthly: preview.monthly,
     sevenDay: preview.sevenDay,
-    fiveHourWindow: {
-      usedPercent: 100 - preview.fiveHour,
-      remainingPercent: preview.fiveHour,
+    sevenDayWindow: {
+      usedPercent: 100 - preview.sevenDay,
+      remainingPercent: preview.sevenDay,
       resetsAt: preview.resetsAt,
-      windowDurationMins: preview.windowDurationMins ?? 300,
+      windowDurationMins: preview.windowDurationMins ?? 10_080,
     },
+    sevenDayResetFraction: quotaResetRemainingFraction({
+      usedPercent: 100 - preview.sevenDay,
+      remainingPercent: preview.sevenDay,
+      resetsAt: preview.resetsAt,
+      windowDurationMins: preview.windowDurationMins ?? 10_080,
+    }),
   } : liveQuota;
   const [nowMs, setNowMs] = useState(Date.now);
 
@@ -203,10 +198,10 @@ export default function TaskbarWidget({ preview }: { preview?: TaskbarWidgetPrev
       }}
     >
       <div className="taskbar-widget-quotas">
-        <QuotaRow label="5h" percent={quota.fiveHour} tone="primary" />
-        <QuotaRow label="7d" percent={quota.sevenDay} tone="secondary" />
+        <QuotaRow label="本月" percent={quota.monthly} tone="primary" />
+        <QuotaRow label="7d" percent={quota.sevenDay} tone="secondary" resetFraction={quota.sevenDayResetFraction} />
       </div>
-      <ResetCountdown window={quota.fiveHourWindow} nowMs={nowMs} />
+      <ResetCountdown window={quota.sevenDayWindow} nowMs={nowMs} />
     </div>
   );
 }
