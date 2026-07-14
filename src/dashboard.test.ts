@@ -50,6 +50,15 @@ describe("dashboard display and layout guards", () => {
     expect(woolProgressPercent(WOOL_MONTHLY_VALUE_CAP * 2)).toBe(100);
   });
 
+  it("adds a left-to-right flow effect to the wool progress fill", () => {
+    const styles = readFileSync(resolve(process.cwd(), "src", "styles.css"), "utf8").replace(/\r\n/g, "\n");
+
+    expect(styles).toContain(".wool-progress-fill::after {");
+    expect(styles).toContain("animation: wool-progress-flow 2.6s linear infinite;");
+    expect(styles).toContain("@keyframes wool-progress-flow {");
+    expect(styles).toContain("@media (prefers-reduced-motion: reduce)");
+  });
+
   it("keeps the half-year heatmap geometry fixed when the window resizes", () => {
     const styles = readFileSync(resolve(process.cwd(), "src", "styles.css"), "utf8").replace(/\r\n/g, "\n");
     expect(styles).toContain("--heatmap-grid-width: 402px");
@@ -58,6 +67,19 @@ describe("dashboard display and layout guards", () => {
     expect(styles).toContain("grid-template-columns: repeat(27, 12px)");
     expect(styles).toContain(".heatmap-cell.is-future-placeholder {\n  background: transparent;");
     expect(styles).not.toContain("justify-content: space-between;\n  min-width: 0;\n}\n\n.heatmap-months");
+  });
+
+  it("keeps tab labels at a constant width across selection states", () => {
+    const styles = readFileSync(resolve(process.cwd(), "src", "styles.css"), "utf8").replace(/\r\n/g, "\n");
+    const source = readFileSync(resolve(process.cwd(), "src", "App.tsx"), "utf8");
+    const tabButton = styles.match(/\.tab-btn \{[\s\S]*?\n\}/)?.[0] ?? "";
+    const activeTabButton = styles.match(/\.tab-btn\.active \{[\s\S]*?\n\}/)?.[0] ?? "";
+
+    expect(tabButton).toContain("font-weight: 650;");
+    expect(tabButton).toContain("flex: 0 0 var(--tab-width);");
+    expect(styles).toContain('.tab-btn[data-tab="skills"] {\n  --tab-width: 72px;');
+    expect(activeTabButton).not.toContain("font-weight:");
+    expect(source).toContain("data-tab={tab.id}");
   });
 
   it("keeps the main desktop window at or above the dashboard design size", () => {

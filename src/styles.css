@@ -763,7 +763,30 @@ select, input {
   top: 50%;
   transform: translateY(-50%);
   left: 0;
+  overflow: hidden;
   transition: width 0.5s ease-out;
+}
+
+.wool-progress-fill::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -60%;
+  width: 46%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.48), transparent);
+  animation: wool-progress-flow 2.6s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes wool-progress-flow {
+  to { transform: translateX(350%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wool-progress-fill::after {
+    animation: none;
+  }
 }
 
 .wool-progress-marker {
@@ -844,16 +867,29 @@ select, input {
 }
 
 .tab-btn {
+  box-sizing: border-box;
   display: flex;
+  flex: 0 0 var(--tab-width);
   align-items: center;
   gap: 6px;
   padding: 7px 14px;
   border-radius: 7px;
   font-size: 12px;
-  font-weight: 550;
+  font-weight: 650;
   color: var(--text-secondary);
   transition: background var(--ease-out), color var(--ease-out);
   justify-content: center;
+  white-space: nowrap;
+}
+
+.tab-btn[data-tab="tasks"],
+.tab-btn[data-tab="trends"],
+.tab-btn[data-tab="projects"] {
+  --tab-width: 96px;
+}
+
+.tab-btn[data-tab="skills"] {
+  --tab-width: 72px;
 }
 
 .tab-btn:hover {
@@ -863,7 +899,6 @@ select, input {
 .tab-btn.active {
   background: var(--surface-control-selected);
   color: var(--text-primary);
-  font-weight: 650;
 }
 
 .tab-btn .tab-icon {
