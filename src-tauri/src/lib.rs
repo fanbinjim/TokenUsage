@@ -16,7 +16,10 @@ use tokenusage_core::{
 use windows::{
     Win32::{
         Foundation::RECT,
-        Graphics::Dwm::{DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute},
+        Graphics::Dwm::{
+            DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+            DwmSetWindowAttribute,
+        },
         UI::WindowsAndMessaging::{
             FindWindowExW, FindWindowW, GA_PARENT, GW_OWNER, GWL_EXSTYLE, GWL_STYLE,
             GWLP_HWNDPARENT, GetAncestor, GetWindow, GetWindowLongPtrW, GetWindowRect,
@@ -176,6 +179,15 @@ fn sync_main_window_appearance(window: &WebviewWindow, theme: &str) {
         // Acrylic supplies the desktop blur; React provides the readable tint.
         let _ = window_vibrancy::apply_acrylic(window, None);
         if let Ok(hwnd) = window.hwnd() {
+            let border_color = DWMWA_COLOR_NONE;
+            let _ = unsafe {
+                DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_BORDER_COLOR,
+                    &border_color as *const _ as _,
+                    std::mem::size_of_val(&border_color) as u32,
+                )
+            };
             let corner_preference = DWMWCP_ROUND;
             let _ = unsafe {
                 DwmSetWindowAttribute(

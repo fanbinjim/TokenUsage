@@ -32,6 +32,15 @@ describe("dashboard display and layout guards", () => {
     expect(styles).not.toContain("rgba(80, 50, 162");
   });
 
+  it("uses one clipped glass layer so native window corners do not stack white edges", () => {
+    const styles = readFileSync(resolve(process.cwd(), "src", "styles.css"), "utf8");
+    expect(styles).not.toContain(".app-shell::before");
+    expect(styles).not.toContain(".app-shell::after");
+    expect(styles).toContain("linear-gradient(var(--surface-window-sheen), var(--surface-window-sheen))");
+    expect(styles).toContain(".footer-shortcut");
+    expect(styles).toMatch(/background:\s*var\(--surface-subtle-bg\);\s*border:\s*0;/);
+  });
+
   it("maps wool milestones into the early progress range and caps the monthly value", () => {
     expect(WOOL_MONTHLY_VALUE_CAP).toBe(46_500);
     expect(woolProgressPercent(null)).toBe(0);
