@@ -160,27 +160,6 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* The native WebView surface is transparent; this layer provides the window tint. */
-.app-shell::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: var(--surface-window-bg);
-  z-index: -2;
-  border-radius: var(--window-corner-radius);
-}
-
-/* Glass overlay */
-.app-shell::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: var(--surface-window-sheen);
-  z-index: -1;
-  border-radius: var(--window-corner-radius);
-  pointer-events: none;
-}
-
 button {
   border: none;
   background: none;
@@ -211,7 +190,9 @@ select, input {
   overflow: hidden;
   backdrop-filter: blur(40px) saturate(1.8);
   -webkit-backdrop-filter: blur(40px) saturate(1.8);
-  background: transparent;
+  background:
+    linear-gradient(var(--surface-window-sheen), var(--surface-window-sheen)),
+    var(--surface-window-bg);
   border: none;
   box-shadow: none;
   isolation: isolate;
@@ -1533,8 +1514,8 @@ select, input {
   color: var(--text-tertiary);
   padding: 0 8px;
   border-radius: 6px;
-  background: var(--surface-control-bg);
-  border: 1px solid var(--surface-control-border);
+  background: var(--surface-subtle-bg);
+  border: 0;
   transform: translateY(-6px);
 }
 
