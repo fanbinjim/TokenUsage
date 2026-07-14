@@ -37,7 +37,7 @@ describe("dashboard display and layout guards", () => {
     expect(styles).not.toContain(".app-shell::after");
     expect(styles).toContain("linear-gradient(var(--surface-window-sheen), var(--surface-window-sheen))");
     expect(styles).toContain(".footer-shortcut");
-    expect(styles).toContain("background: var(--surface-subtle-bg);\n  border: 0;");
+    expect(styles).toMatch(/background:\s*var\(--surface-subtle-bg\);\s*border:\s*0;/);
   });
 
   it("maps wool milestones into the early progress range and caps the monthly value", () => {
