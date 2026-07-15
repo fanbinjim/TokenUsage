@@ -74,6 +74,7 @@ pub fn read(path: &Path) -> Result<(AppServerSnapshot, Vec<DiagnosticItem>)> {
     let mut initialized = false;
     let mut complete = [false; 3];
     let mut snapshot = AppServerSnapshot::default();
+    let mut rate_limit_plan_type = None;
     let mut diagnostics = Vec::new();
     while Instant::now() < deadline && complete.iter().any(|done| !done) {
         let timeout = deadline.saturating_duration_since(Instant::now());
@@ -121,7 +122,7 @@ pub fn read(path: &Path) -> Result<(AppServerSnapshot, Vec<DiagnosticItem>)> {
         };
         match id {
             2 => snapshot.account = parse_account(result),
-            3 => parse_rate_limits(result, &mut snapshot),
+            3 => rate_limit_plan_type = parse_rate_limits(result, &mut snapshot),
             4 => {
                 snapshot.cloud_lifetime_tokens = result
                     .get("summary")
@@ -142,6 +143,7 @@ pub fn read(path: &Path) -> Result<(AppServerSnapshot, Vec<DiagnosticItem>)> {
             "Codex app-server returned only part of the account data before timeout.",
         ));
     }
+    apply_rate_limit_plan(&mut snapshot, rate_limit_plan_type);
     let _ = child.kill();
     let _ = child.wait();
     Ok((snapshot, diagnostics))
@@ -167,13 +169,13 @@ fn parse_account(value: &Value) -> Option<AccountInfo> {
     })
 }
 
-fn parse_rate_limits(value: &Value, snapshot: &mut AppServerSnapshot) {
+fn parse_rate_limits(value: &Value, snapshot: &mut AppServerSnapshot) -> Option<String> {
     let limits = value
         .get("rateLimitsByLimitId")
         .and_then(|all| all.get("codex"))
         .or_else(|| value.get("rateLimits"));
     let Some(limits) = limits else {
-        return;
+        return None;
     };
     snapshot.limit_id = limits
         .get("limitId")
@@ -185,6 +187,16 @@ fn parse_rate_limits(value: &Value, snapshot: &mut AppServerSnapshot) {
         .map(str::to_owned);
     snapshot.primary = parse_window(limits.get("primary"));
     snapshot.secondary = parse_window(limits.get("secondary"));
+    limits
+        .get("planType")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+fn apply_rate_limit_plan(snapshot: &mut AppServerSnapshot, plan_type: Option<String>) {
+    if let (Some(account), Some(plan_type)) = (&mut snapshot.account, plan_type) {
+        account.plan_type = Some(plan_type);
+    }
 }
 
 fn parse_window(value: Option<&Value>) -> Option<RateWindow> {
@@ -212,4 +224,38 @@ fn number_f64(value: &Value) -> Option<f64> {
         .as_f64()
         .or_else(|| value.as_i64().map(|number| number as f64))
         .or_else(|| value.as_u64().map(|number| number as f64))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_rate_limit_plan_overrides_a_stale_account_plan() {
+        let response = json!({
+            "rateLimits": { "planType": "plus" },
+            "rateLimitsByLimitId": {
+                "codex": {
+                    "limitId": "codex",
+                    "planType": "plus",
+                    "primary": { "usedPercent": 9, "windowDurationMins": 10080, "resetsAt": 1784511901 },
+                    "secondary": null
+                }
+            }
+        });
+        let mut snapshot = AppServerSnapshot {
+            account: Some(AccountInfo {
+                r#type: "chatgpt".into(),
+                plan_type: Some("free".into()),
+                email_present: true,
+            }),
+            ..Default::default()
+        };
+
+        let plan_type = parse_rate_limits(&response, &mut snapshot);
+        apply_rate_limit_plan(&mut snapshot, plan_type);
+
+        assert_eq!(snapshot.account.unwrap().plan_type.as_deref(), Some("plus"));
+        assert_eq!(snapshot.limit_id.as_deref(), Some("codex"));
+    }
 }

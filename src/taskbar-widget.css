@@ -75,19 +75,6 @@
   transition: transform 180ms ease-out, background-color 180ms ease-out;
 }
 
-.taskbar-widget-reset-marker {
-  position: absolute;
-  top: -2px;
-  z-index: 1;
-  width: 2px;
-  height: 8px;
-  border-radius: 999px;
-  transform: translateX(-50%);
-  background: rgba(255, 255, 255, 0.95);
-  box-shadow: 0 0 2px rgba(0, 0, 0, 0.45);
-  pointer-events: none;
-}
-
 .taskbar-widget-row.quota-unavailable .taskbar-widget-track {
   background: rgba(52, 68, 84, 0.12);
 }

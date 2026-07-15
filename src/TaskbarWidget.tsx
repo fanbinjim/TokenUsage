@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./api";
 import type { AppSettings, MultiRuntimeUsageSnapshot, RateWindow, RuntimeScope } from "./types";
-import { currentMonthPlanWindow, findSevenDayQuotaWindow, quotaResetRemainingFraction } from "./quota";
+import { currentMonthPlanWindow, findSevenDayQuotaWindow } from "./quota";
 import { useUsageStore } from "./store";
 import "./taskbar-widget.css";
 
@@ -12,13 +12,13 @@ export interface TaskbarQuotaValues {
   monthly: number;
   sevenDay: number | null;
   sevenDayWindow: RateWindow | null;
-  sevenDayResetFraction: number | null;
 }
 
 export type TaskbarResetLevel = "danger" | "warning" | "info" | "healthy";
 
 export interface TaskbarResetCountdown {
   label: string;
+  resetDateLabel: string;
   level: TaskbarResetLevel;
   progress: number;
   remainingMinutes: number;
@@ -48,7 +48,6 @@ export function taskbarQuotaValues(
     monthly: validRemainingPercent(currentMonthPlanWindow(new Date(nowMs))) ?? 100,
     sevenDay: validRemainingPercent(sevenDayWindow),
     sevenDayWindow,
-    sevenDayResetFraction: quotaResetRemainingFraction(sevenDayWindow, nowMs),
   };
 }
 
@@ -77,10 +76,12 @@ export function taskbarResetCountdown(
   const minutes = remainingMinutes % 60;
   const label = hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}` : `${remainingMinutes}m`;
   const resetDate = new Date(resetMs);
+  const resetDateLabel = `${resetDate.getMonth() + 1}.${resetDate.getDate()}`;
   const resetTime = `${String(resetDate.getHours()).padStart(2, "0")}:${String(resetDate.getMinutes()).padStart(2, "0")}`;
 
   return {
     label,
+    resetDateLabel,
     level: taskbarResetLevel(remainingMinutes),
     progress,
     remainingMinutes,
@@ -88,11 +89,10 @@ export function taskbarResetCountdown(
   };
 }
 
-function QuotaRow({ label, percent, tone, resetFraction }: {
+function QuotaRow({ label, percent, tone }: {
   label: string;
   percent: number | null;
   tone: "primary" | "secondary";
-  resetFraction?: number | null;
 }) {
   const normalizedPercent = percent == null ? 0 : Math.max(0, Math.min(100, percent));
   const level = percent == null ? null : taskbarQuotaLevel(normalizedPercent);
@@ -104,9 +104,6 @@ function QuotaRow({ label, percent, tone, resetFraction }: {
       <span className="taskbar-widget-label">{label}</span>
       <span className="taskbar-widget-track">
         <span className="taskbar-widget-fill" style={{ transform: `scaleX(${normalizedPercent / 100})` }} />
-        {resetFraction != null && (
-          <span className="taskbar-widget-reset-marker" style={{ left: `${resetFraction * 100}%` }} />
-        )}
       </span>
       <span className="taskbar-widget-value">{percent == null ? "--" : `${Math.round(normalizedPercent)}%`}</span>
     </div>
@@ -137,7 +134,7 @@ function ResetCountdown({ window, nowMs }: { window: RateWindow | null; nowMs: n
           strokeDasharray={`${progress} 100`}
         />
       </svg>
-      <span className="taskbar-reset-label">{countdown?.resetTime ?? "--"}</span>
+      <span className="taskbar-reset-label">{countdown?.resetDateLabel ?? "--"}</span>
     </div>
   );
 }
@@ -161,12 +158,6 @@ export default function TaskbarWidget({ preview }: { preview?: TaskbarWidgetPrev
       resetsAt: preview.resetsAt,
       windowDurationMins: preview.windowDurationMins ?? 10_080,
     },
-    sevenDayResetFraction: quotaResetRemainingFraction({
-      usedPercent: 100 - preview.sevenDay,
-      remainingPercent: preview.sevenDay,
-      resetsAt: preview.resetsAt,
-      windowDurationMins: preview.windowDurationMins ?? 10_080,
-    }),
   } : liveQuota;
   const [nowMs, setNowMs] = useState(Date.now);
 
@@ -198,8 +189,8 @@ export default function TaskbarWidget({ preview }: { preview?: TaskbarWidgetPrev
       }}
     >
       <div className="taskbar-widget-quotas">
+        <QuotaRow label="7d" percent={quota.sevenDay} tone="secondary" />
         <QuotaRow label="本月" percent={quota.monthly} tone="primary" />
-        <QuotaRow label="7d" percent={quota.sevenDay} tone="secondary" resetFraction={quota.sevenDayResetFraction} />
       </div>
       <ResetCountdown window={quota.sevenDayWindow} nowMs={nowMs} />
     </div>

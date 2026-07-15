@@ -38,6 +38,7 @@ describe("taskbar quota", () => {
     const markup = renderToStaticMarkup(<TaskbarWidget />);
     expect(markup).toContain("本月");
     expect(markup).toContain("7d");
+    expect(markup.indexOf("7d")).toBeLessThan(markup.indexOf("本月"));
     expect(markup).toContain("quota-unavailable");
   });
 
@@ -51,7 +52,6 @@ describe("taskbar quota", () => {
       monthly: 50,
       sevenDay: 83,
     });
-    expect(withSecondaryWindow.sevenDayResetFraction).toBeCloseTo(0.5, 6);
     expect(taskbarQuotaValues(runtimeSnapshot(sevenDay, null), "codex", now)).toMatchObject({
       monthly: 50,
       sevenDay: 83,
@@ -62,7 +62,7 @@ describe("taskbar quota", () => {
   it("keeps the 7-day quota unavailable when the API does not return it", () => {
     const now = new Date(2026, 6, 16, 12).getTime();
     const values = taskbarQuotaValues(runtimeSnapshot(null, null), "codex", now);
-    expect(values).toMatchObject({ monthly: 50, sevenDay: null, sevenDayWindow: null, sevenDayResetFraction: null });
+    expect(values).toMatchObject({ monthly: 50, sevenDay: null, sevenDayWindow: null });
   });
 
   it("maps quota percentages to non-overlapping warning ranges", () => {
@@ -87,11 +87,21 @@ describe("taskbar quota", () => {
 
     expect(countdown).toMatchObject({
       label: "3:42",
+      resetDateLabel: "7.12",
       level: "healthy",
       remainingMinutes: 222,
     });
     expect(countdown?.progress).toBeCloseTo(222 / 10_080, 5);
     expect(countdown?.resetTime).toMatch(/^\d{2}:\d{2}$/);
+  });
+
+  it("keeps the taskbar 7-day bar quota-only and shows the reset date in the circle", () => {
+    const markup = renderToStaticMarkup(
+      <TaskbarWidget preview={{ monthly: 53, sevenDay: 91, resetsAt: "2026-07-22T06:51:28.000Z" }} />,
+    );
+
+    expect(markup).toContain("7.22");
+    expect(markup).not.toContain("taskbar-widget-reset-marker");
   });
 
   it("uses urgent colors as a quota reset approaches", () => {
