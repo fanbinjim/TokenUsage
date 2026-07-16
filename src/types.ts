@@ -131,6 +131,7 @@ export interface AppSettings {
   selectedRuntime: RuntimeScope;
   visibleRuntimes: RuntimeScope[];
   showUsedQuota: boolean;
+  subscriptionStartedOn: string | null;
   quickPanelDensity: "compact" | "detailed";
   keepRunningWhenMainWindowClosed: boolean;
   keepMainWindowOnTop: boolean;

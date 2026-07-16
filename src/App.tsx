@@ -6,7 +6,7 @@ import { GridComponent, LegendComponent, TooltipComponent } from "echarts/compon
 import { CanvasRenderer } from "echarts/renderers";
 import { formatDaysHours, formatTokens, formatReset } from "./format";
 import { createMockDashboardSnapshot, MOCK_SETTINGS } from "./mockDashboard";
-import { currentMonthPlanWindow, findSevenDayQuotaWindow, quotaResetRemainingFraction } from "./quota";
+import { findSevenDayQuotaWindow, quotaResetRemainingFraction, subscriptionPlanWindow } from "./quota";
 import { useUsageStore } from "./store";
 import type {
   AppSettings,
@@ -244,7 +244,7 @@ export function dashboardQuotaPercent(window: RateWindow | null | undefined): nu
   return Math.round(percent);
 }
 
-function DualQuotaRing({ primary, secondary }: { primary: RateWindow | null; secondary: RateWindow | null }) {
+function DualQuotaRing({ primary, secondary, subscriptionStartedOn }: { primary: RateWindow | null; secondary: RateWindow | null; subscriptionStartedOn: string | null }) {
   const size = 160;
   const cx = size / 2;
   const cy = size / 2;
@@ -252,7 +252,7 @@ function DualQuotaRing({ primary, secondary }: { primary: RateWindow | null; sec
   const innerR = 46;
   const strokeW = 14;
 
-  const monthlyWindow = currentMonthPlanWindow();
+  const monthlyWindow = subscriptionPlanWindow(subscriptionStartedOn);
   const sevenDayWindow = findSevenDayQuotaWindow(primary, secondary);
   const sevenDayResetFraction = quotaResetRemainingFraction(sevenDayWindow);
   const outerPct = dashboardQuotaPercent(monthlyWindow);
@@ -328,8 +328,8 @@ function DualQuotaRing({ primary, secondary }: { primary: RateWindow | null; sec
    QuotaResetSummary
    ======================================================== */
 
-function QuotaResetSummary({ primary, secondary }: { primary: RateWindow | null; secondary: RateWindow | null }) {
-  const monthlyWindow = currentMonthPlanWindow();
+function QuotaResetSummary({ primary, secondary, subscriptionStartedOn }: { primary: RateWindow | null; secondary: RateWindow | null; subscriptionStartedOn: string | null }) {
+  const monthlyWindow = subscriptionPlanWindow(subscriptionStartedOn);
   const sevenDayWindow = findSevenDayQuotaWindow(primary, secondary);
   return (
     <div className="quota-reset-summary">
@@ -564,7 +564,7 @@ function TitleBar({
    Overview Section
    ======================================================== */
 
-function OverviewSection({ runtime }: { runtime: RuntimeUsageSnapshot }) {
+function OverviewSection({ runtime, subscriptionStartedOn }: { runtime: RuntimeUsageSnapshot; subscriptionStartedOn: string | null }) {
   const { snapshot } = runtime;
   const local = snapshot.local;
   const detailed = local?.detailedUsage;
@@ -572,8 +572,8 @@ function OverviewSection({ runtime }: { runtime: RuntimeUsageSnapshot }) {
   return (
     <section className="glass-section overview">
       <div className="overview-left">
-        <DualQuotaRing primary={snapshot.primary} secondary={snapshot.secondary} />
-        <QuotaResetSummary primary={snapshot.primary} secondary={snapshot.secondary} />
+        <DualQuotaRing primary={snapshot.primary} secondary={snapshot.secondary} subscriptionStartedOn={subscriptionStartedOn} />
+        <QuotaResetSummary primary={snapshot.primary} secondary={snapshot.secondary} subscriptionStartedOn={subscriptionStartedOn} />
       </div>
       <div className="overview-right">
         <div className="token-cards">
@@ -1237,6 +1237,16 @@ function SettingsModal({
               <option value="used">显示已用</option>
             </select>
           </div>
+          <div className="settings-field">
+            <label>最近一次订阅日期</label>
+            <input
+              type="date"
+              value={settings.subscriptionStartedOn ?? ""}
+              max="9999-12-31"
+              onChange={(e) => onUpdate({ subscriptionStartedOn: e.target.value || null })}
+            />
+            <span className="settings-hint">用于计算主界面外环；每月按该日期进入下一订阅周期。</span>
+          </div>
           <div className="settings-toggle">
             <span>关闭窗口后驻留托盘</span>
             <input type="checkbox" checked={settings.keepRunningWhenMainWindowClosed} onChange={(e) => onUpdate({ keepRunningWhenMainWindowClosed: e.target.checked })} />
@@ -1449,7 +1459,7 @@ export default function App({ mockMode = false }: { mockMode?: boolean }) {
       )}
 
       <div className="main-content">
-        <OverviewSection runtime={runtime} />
+        <OverviewSection runtime={runtime} subscriptionStartedOn={settings?.subscriptionStartedOn ?? null} />
 
         <section className="glass-section workspace">
           <div className="tab-bar">

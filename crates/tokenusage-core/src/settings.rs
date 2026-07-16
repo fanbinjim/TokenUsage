@@ -18,6 +18,7 @@ pub struct AppSettings {
     pub selected_runtime: RuntimeScope,
     pub visible_runtimes: Vec<RuntimeScope>,
     pub show_used_quota: bool,
+    pub subscription_started_on: Option<String>,
     pub quick_panel_density: String,
     pub keep_running_when_main_window_closed: bool,
     pub keep_main_window_on_top: bool,
@@ -39,6 +40,7 @@ impl Default for AppSettings {
             selected_runtime: RuntimeScope::Codex,
             visible_runtimes: vec![RuntimeScope::Codex, RuntimeScope::ClaudeCode],
             show_used_quota: false,
+            subscription_started_on: None,
             quick_panel_density: "compact".into(),
             keep_running_when_main_window_closed: true,
             keep_main_window_on_top: false,
@@ -61,6 +63,7 @@ pub struct SettingsPatch {
     pub selected_runtime: Option<RuntimeScope>,
     pub visible_runtimes: Option<Vec<RuntimeScope>>,
     pub show_used_quota: Option<bool>,
+    pub subscription_started_on: Option<Option<String>>,
     pub quick_panel_density: Option<String>,
     pub keep_running_when_main_window_closed: Option<bool>,
     pub keep_main_window_on_top: Option<bool>,
@@ -95,6 +98,9 @@ impl AppSettings {
         }
         if let Some(value) = patch.show_used_quota {
             self.show_used_quota = value;
+        }
+        if let Some(value) = patch.subscription_started_on {
+            self.subscription_started_on = value;
         }
         if let Some(value) = patch.quick_panel_density {
             self.quick_panel_density = value;
@@ -214,5 +220,20 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(settings.taskbar_widget_right_offset, 3000);
+    }
+
+    #[test]
+    fn subscription_date_can_be_saved_and_cleared() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            subscription_started_on: Some(Some("2026-07-10".into())),
+            ..Default::default()
+        });
+        assert_eq!(settings.subscription_started_on.as_deref(), Some("2026-07-10"));
+        settings.apply_patch(SettingsPatch {
+            subscription_started_on: Some(None),
+            ..Default::default()
+        });
+        assert_eq!(settings.subscription_started_on, None);
     }
 }

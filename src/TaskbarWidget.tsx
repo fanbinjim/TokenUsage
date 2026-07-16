@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./api";
 import type { AppSettings, MultiRuntimeUsageSnapshot, RateWindow, RuntimeScope } from "./types";
-import { currentMonthPlanWindow, findSevenDayQuotaWindow } from "./quota";
+import { findSevenDayQuotaWindow, subscriptionPlanWindow } from "./quota";
 import { useUsageStore } from "./store";
 import "./taskbar-widget.css";
 
@@ -41,11 +41,12 @@ export function taskbarQuotaValues(
   snapshot: MultiRuntimeUsageSnapshot | null,
   selectedScope: RuntimeScope | undefined,
   nowMs = Date.now(),
+  subscriptionStartedOn?: string | null,
 ): TaskbarQuotaValues {
   const runtime = snapshot?.runtimes.find((item) => item.scope === selectedScope) ?? snapshot?.runtimes[0];
   const sevenDayWindow = findSevenDayQuotaWindow(runtime?.snapshot.primary, runtime?.snapshot.secondary);
   return {
-    monthly: validRemainingPercent(currentMonthPlanWindow(new Date(nowMs))) ?? 100,
+    monthly: validRemainingPercent(subscriptionPlanWindow(subscriptionStartedOn, new Date(nowMs))) ?? 100,
     sevenDay: validRemainingPercent(sevenDayWindow),
     sevenDayWindow,
   };
@@ -148,7 +149,7 @@ export interface TaskbarWidgetPreview {
 
 export default function TaskbarWidget({ preview }: { preview?: TaskbarWidgetPreview }) {
   const { bootstrap, setSnapshot, setSettings, settings, snapshot } = useUsageStore();
-  const liveQuota = taskbarQuotaValues(snapshot, settings?.selectedRuntime);
+  const liveQuota = taskbarQuotaValues(snapshot, settings?.selectedRuntime, Date.now(), settings?.subscriptionStartedOn);
   const quota: TaskbarQuotaValues = preview ? {
     monthly: preview.monthly,
     sevenDay: preview.sevenDay,

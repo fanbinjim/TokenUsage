@@ -24,17 +24,53 @@ export function quotaResetRemainingFraction(
   return Math.max(0, Math.min(1, (resetsAtMs - nowMs) / durationMs));
 }
 
-/**
- * The Codex app-server exposes the plan type but not the subscription renewal
- * date. Use the current calendar month as the visible monthly plan cycle.
- */
+function dateInMonth(year: number, month: number, day: number): Date {
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  return new Date(year, month, Math.min(day, lastDay));
+}
+
+function parseLocalDate(value: string | null | undefined): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value ?? "");
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]) - 1;
+  const day = Number(match[3]);
+  const parsed = new Date(year, month, day);
+  if (parsed.getFullYear() !== year || parsed.getMonth() !== month || parsed.getDate() !== day) return null;
+  return parsed;
+}
+
+/** Builds the current monthly billing cycle from a user-supplied subscription date. */
+export function subscriptionPlanWindow(subscriptionStartedOn: string | null | undefined, now = new Date()): RateWindow {
+  const anchor = parseLocalDate(subscriptionStartedOn);
+  if (!anchor) return currentMonthPlanWindow(now);
+
+  const renewalDay = anchor.getDate();
+  let startsAt = dateInMonth(now.getFullYear(), now.getMonth(), renewalDay);
+  if (startsAt.getTime() > now.getTime()) {
+    startsAt = dateInMonth(now.getFullYear(), now.getMonth() - 1, renewalDay);
+  }
+  if (startsAt.getTime() < anchor.getTime()) startsAt = anchor;
+  const resetsAt = dateInMonth(startsAt.getFullYear(), startsAt.getMonth() + 1, renewalDay);
+  const totalMs = resetsAt.getTime() - startsAt.getTime();
+  const remainingMs = Math.max(0, Math.min(totalMs, resetsAt.getTime() - now.getTime()));
+  const remainingPercent = (remainingMs / totalMs) * 100;
+
+  return {
+    usedPercent: 100 - remainingPercent,
+    remainingPercent,
+    windowDurationMins: Math.round(totalMs / MINUTE),
+    resetsAt: resetsAt.toISOString(),
+  };
+}
+
+/** Calendar-month fallback used until the user records a subscription date. */
 export function currentMonthPlanWindow(now = new Date()): RateWindow {
   const startsAt = new Date(now.getFullYear(), now.getMonth(), 1);
   const resetsAt = new Date(now.getFullYear(), now.getMonth() + 1, 1);
   const totalMs = resetsAt.getTime() - startsAt.getTime();
   const remainingMs = Math.max(0, Math.min(totalMs, resetsAt.getTime() - now.getTime()));
   const remainingPercent = (remainingMs / totalMs) * 100;
-
   return {
     usedPercent: 100 - remainingPercent,
     remainingPercent,

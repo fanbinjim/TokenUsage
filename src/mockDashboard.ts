@@ -78,6 +78,7 @@ export const MOCK_SETTINGS: AppSettings = {
   selectedRuntime: "codex",
   visibleRuntimes: ["codex"],
   showUsedQuota: false,
+  subscriptionStartedOn: "2026-07-10",
   quickPanelDensity: "detailed",
   keepRunningWhenMainWindowClosed: true,
   keepMainWindowOnTop: false,
