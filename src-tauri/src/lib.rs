@@ -1,4 +1,10 @@
-use std::{sync::Mutex, time::Duration};
+use std::{
+    sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicIsize, Ordering},
+    },
+    time::Duration,
+};
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -7,26 +13,30 @@ use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, Theme, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder,
 };
+use tauri_plugin_autostart::ManagerExt;
 use tokenusage_core::{
     APP_SETTINGS_SCHEMA_VERSION, AppSettings, DataPaths, MultiRuntimeUsageSnapshot, SettingsPatch,
     SettingsStore, load_multi_runtime,
 };
-use tauri_plugin_autostart::ManagerExt;
 
 #[cfg(target_os = "windows")]
 use windows::{
     Win32::{
-        Foundation::RECT,
+        Foundation::{LPARAM, LRESULT, POINT, RECT, WPARAM},
         Graphics::Dwm::{
             DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
             DwmSetWindowAttribute,
         },
-        UI::WindowsAndMessaging::{
-            FindWindowExW, FindWindowW, GA_PARENT, GW_OWNER, GWL_EXSTYLE, GWL_STYLE,
-            GWLP_HWNDPARENT, GetAncestor, GetWindow, GetWindowLongPtrW, GetWindowRect,
-            HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-            SWP_SHOWWINDOW, SetParent, SetWindowLongPtrW, SetWindowPos, WS_CAPTION, WS_CHILD,
-            WS_EX_TRANSPARENT, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
+        UI::{
+            Input::KeyboardAndMouse::EnableWindow,
+            WindowsAndMessaging::{
+                AppendMenuW, CallWindowProcW, CreatePopupMenu, DefWindowProcW, DestroyMenu,
+                FindWindowExW, FindWindowW, GW_OWNER, GWLP_HWNDPARENT, GWLP_WNDPROC, GetCursorPos,
+                GetWindow, GetWindowRect, HWND_TOPMOST, MF_SEPARATOR, MF_STRING, SWP_NOACTIVATE,
+                SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SetForegroundWindow, SetWindowLongPtrW,
+                SetWindowPos, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
+                WM_RBUTTONUP, WNDPROC,
+            },
         },
     },
     core::{PCWSTR, w},
@@ -43,6 +53,21 @@ const TASKBAR_WIDGET_WIDTH: f64 = 184.0;
 const TASKBAR_WIDGET_VERTICAL_MARGIN: f64 = 3.0;
 const TASKBAR_NOTIFICATION_FALLBACK_WIDTH: f64 = 320.0;
 const USAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
+// The taskbar visual widget and input layer are kept separate deliberately.
+
+#[cfg(target_os = "windows")]
+const TASKBAR_MENU_OPEN: usize = 1;
+#[cfg(target_os = "windows")]
+const TASKBAR_MENU_REFRESH: usize = 2;
+#[cfg(target_os = "windows")]
+const TASKBAR_MENU_SETTINGS: usize = 3;
+#[cfg(target_os = "windows")]
+const TASKBAR_MENU_QUIT: usize = 4;
+
+#[cfg(target_os = "windows")]
+static TASKBAR_INPUT_PROXY_APP: OnceLock<AppHandle> = OnceLock::new();
+#[cfg(target_os = "windows")]
+static TASKBAR_INPUT_PROXY_ORIGINAL_WNDPROC: AtomicIsize = AtomicIsize::new(0);
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -156,30 +181,6 @@ fn reconcile_autostart_setting(app: &tauri::App) {
     let updated = settings.clone();
     drop(settings);
     let _ = config_store(&updated).save(&updated);
-}
-
-#[tauri::command]
-fn show_taskbar_widget_menu(window: WebviewWindow) -> Result<(), String> {
-    if !matches!(
-        window.label(),
-        TASKBAR_WIDGET_LABEL | TASKBAR_INPUT_PROXY_LABEL
-    ) {
-        return Err("The taskbar widget menu is only available from the taskbar widget.".into());
-    }
-
-    let open = MenuItem::with_id(&window, "open", "Open TokenUsage", true, None::<&str>)
-        .map_err(|error| error.to_string())?;
-    let refresh = MenuItem::with_id(&window, "refresh", "Refresh", true, None::<&str>)
-        .map_err(|error| error.to_string())?;
-    let settings = MenuItem::with_id(&window, "settings", "Settings", true, None::<&str>)
-        .map_err(|error| error.to_string())?;
-    let separator = PredefinedMenuItem::separator(&window).map_err(|error| error.to_string())?;
-    let quit = MenuItem::with_id(&window, "quit", "Quit", true, None::<&str>)
-        .map_err(|error| error.to_string())?;
-    let menu = Menu::with_items(&window, &[&open, &refresh, &settings, &separator, &quit])
-        .map_err(|error| error.to_string())?;
-
-    window.popup_menu(&menu).map_err(|error| error.to_string())
 }
 
 fn store_and_publish_snapshot(
@@ -331,8 +332,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             bootstrap,
             refresh_usage,
-            save_settings,
-            show_taskbar_widget_menu
+            save_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running TokenUsage");
@@ -486,9 +486,9 @@ fn create_taskbar_widget(app: &tauri::App) -> tauri::Result<()> {
     .decorations(false)
     .transparent(true)
     .background_color(Color(0, 0, 0, 0))
-    .always_on_top(false)
+    .always_on_top(true)
     .skip_taskbar(true)
-    .focusable(false)
+    .focusable(true)
     .shadow(false)
     .visible(false)
     .on_page_load(|widget, payload| {
@@ -513,13 +513,12 @@ fn create_taskbar_input_proxy(app: &tauri::App) -> tauri::Result<()> {
     if app.get_webview_window(TASKBAR_INPUT_PROXY_LABEL).is_some() {
         return Ok(());
     }
-
     let proxy = WebviewWindowBuilder::new(
         app,
         TASKBAR_INPUT_PROXY_LABEL,
         WebviewUrl::App("index.html".into()),
     )
-    .title("TokenUsage Taskbar Input Proxy")
+    .title("TokenUsage Taskbar Input Layer")
     .inner_size(TASKBAR_WIDGET_WIDTH, 34.0)
     .resizable(false)
     .decorations(false)
@@ -527,7 +526,7 @@ fn create_taskbar_input_proxy(app: &tauri::App) -> tauri::Result<()> {
     .background_color(Color(0, 0, 0, 0))
     .always_on_top(true)
     .skip_taskbar(true)
-    .focusable(false)
+    .focusable(true)
     .shadow(false)
     .visible(false)
     .on_page_load(|proxy, payload| {
@@ -540,10 +539,14 @@ fn create_taskbar_input_proxy(app: &tauri::App) -> tauri::Result<()> {
                 .map(|settings| settings.clone())
                 .unwrap_or_default();
             sync_taskbar_widget(app, &settings);
+            if let Some(proxy) = app.get_webview_window(TASKBAR_INPUT_PROXY_LABEL) {
+                install_taskbar_input_proxy_hook(&proxy);
+            }
         }
     })
     .build()?;
     let _ = proxy.set_background_color(Some(Color(0, 0, 0, 0)));
+    let _ = TASKBAR_INPUT_PROXY_APP.set(app.handle().clone());
     Ok(())
 }
 
@@ -566,21 +569,16 @@ fn sync_taskbar_widget(app: &AppHandle, settings: &AppSettings) {
             let _ = widget.hide();
         }
     }
-
-    sync_taskbar_input_proxy(app, settings);
-}
-
-#[cfg(target_os = "windows")]
-fn sync_taskbar_input_proxy(app: &AppHandle, settings: &AppSettings) {
-    let Some(proxy) = app.get_webview_window(TASKBAR_INPUT_PROXY_LABEL) else {
-        return;
-    };
-    if !settings.taskbar_widget_enabled {
-        let _ = proxy.hide();
-    } else if position_top_level_taskbar_window(app, &proxy, settings.taskbar_widget_right_offset) {
-        let _ = keep_taskbar_input_proxy_above_taskbar(&proxy);
-    } else {
-        let _ = proxy.hide();
+    if let Some(proxy) = app.get_webview_window(TASKBAR_INPUT_PROXY_LABEL) {
+        if !settings.taskbar_widget_enabled {
+            let _ = proxy.hide();
+        } else if !position_top_level_taskbar_window(
+            app,
+            &proxy,
+            settings.taskbar_widget_right_offset,
+        ) {
+            let _ = proxy.hide();
+        }
     }
 }
 
@@ -625,14 +623,14 @@ fn taskbar_widget_left(anchor_left: i32, width: i32, manual_offset: i32, minimum
 }
 
 #[cfg(target_os = "windows")]
-fn keep_taskbar_input_proxy_above_taskbar(proxy: &WebviewWindow) -> bool {
-    let (Ok(hwnd), Some(taskbar)) = (proxy.hwnd(), taskbar_handle()) else {
+fn keep_taskbar_widget_above_taskbar(widget: &WebviewWindow) -> bool {
+    let (Ok(hwnd), Some(taskbar)) = (widget.hwnd(), taskbar_handle()) else {
         return false;
     };
 
-    // Keep this as a top-level window: using SetParent would put it back into
-    // Explorer's unreliable child hit-test path. An owned top-level window is
-    // always above its owner, so taskbar activation cannot bury the proxy.
+    // Explorer does not reliably accept a foreign WebView as a child window.
+    // Keep the widget as an owned, top-level overlay instead: it stays above
+    // the taskbar while preserving normal WebView painting and hit testing.
     let owner = unsafe { GetWindow(hwnd, GW_OWNER) }.ok();
     if owner != Some(taskbar) {
         unsafe { SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, taskbar.0 as isize) };
@@ -656,97 +654,112 @@ fn keep_taskbar_input_proxy_above_taskbar(proxy: &WebviewWindow) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn taskbar_child_window_style(style: isize) -> isize {
-    // SetParent does not convert a top-level window into a true child window.
-    // Clear every style that can produce a native non-client frame as a guard
-    // against the WebView host restoring those styles during initialization.
-    let non_client_style = (WS_POPUP.0
-        | WS_CAPTION.0
-        | WS_THICKFRAME.0
-        | WS_SYSMENU.0
-        | WS_MINIMIZEBOX.0
-        | WS_MAXIMIZEBOX.0) as isize;
-    (style & !non_client_style) | WS_CHILD.0 as isize
+fn position_taskbar_widget(app: &AppHandle, widget: &WebviewWindow, right_offset: u32) -> bool {
+    position_top_level_taskbar_window(app, widget, right_offset)
 }
 
 #[cfg(target_os = "windows")]
-fn taskbar_widget_interactive_ex_style(style: isize) -> isize {
-    style & !(WS_EX_TRANSPARENT.0 as isize)
-}
+fn install_taskbar_input_proxy_hook(proxy: &WebviewWindow) {
+    let Ok(hwnd) = proxy.hwnd() else {
+        return;
+    };
 
-#[cfg(target_os = "windows")]
-fn restore_taskbar_widget_hit_testing(hwnd: windows::Win32::Foundation::HWND) {
-    let ex_style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
-    let interactive_ex_style = taskbar_widget_interactive_ex_style(ex_style);
-    if ex_style != interactive_ex_style {
-        unsafe { SetWindowLongPtrW(hwnd, GWL_EXSTYLE, interactive_ex_style) };
+    // WebView2 renders its child surface in a separate process. Disabling the
+    // transparent child lets the app-owned proxy window receive mouse input
+    // while the visible widget below it remains fully unobscured.
+    if let Ok(webview) =
+        unsafe { FindWindowExW(Some(hwnd), None, w!("WRY_WEBVIEW"), PCWSTR::null()) }
+    {
+        let _ = unsafe { EnableWindow(webview, false) };
     }
-}
 
-#[cfg(target_os = "windows")]
-fn apply_taskbar_child_window_style(hwnd: windows::Win32::Foundation::HWND) -> isize {
-    let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) };
-    let child_style = taskbar_child_window_style(style);
-    if style != child_style {
-        unsafe { SetWindowLongPtrW(hwnd, GWL_STYLE, child_style) };
+    if TASKBAR_INPUT_PROXY_ORIGINAL_WNDPROC.load(Ordering::Acquire) != 0 {
+        return;
     }
-    style
-}
-
-#[cfg(target_os = "windows")]
-fn restore_top_level_window_style(hwnd: windows::Win32::Foundation::HWND, style: isize) {
-    unsafe { SetWindowLongPtrW(hwnd, GWL_STYLE, style) };
-    let _ = unsafe {
-        SetWindowPos(
+    let previous = unsafe {
+        SetWindowLongPtrW(
             hwnd,
-            None,
-            0,
-            0,
-            0,
-            0,
-            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+            GWLP_WNDPROC,
+            taskbar_input_proxy_wnd_proc as *const () as usize as isize,
         )
     };
+    if previous != 0 {
+        TASKBAR_INPUT_PROXY_ORIGINAL_WNDPROC.store(previous, Ordering::Release);
+    }
 }
 
 #[cfg(target_os = "windows")]
-fn attach_taskbar_widget(widget: &WebviewWindow) -> bool {
-    let (Ok(hwnd), Some(taskbar)) = (widget.hwnd(), taskbar_handle()) else {
-        return false;
+unsafe extern "system" fn taskbar_input_proxy_wnd_proc(
+    hwnd: windows::Win32::Foundation::HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if message == WM_RBUTTONUP {
+        if let Some(app) = TASKBAR_INPUT_PROXY_APP.get() {
+            show_native_taskbar_widget_menu(app, hwnd);
+        }
+        return LRESULT(0);
+    }
+
+    let previous = TASKBAR_INPUT_PROXY_ORIGINAL_WNDPROC.load(Ordering::Acquire);
+    if previous == 0 {
+        return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
+    }
+    let original: WNDPROC = unsafe { std::mem::transmute(previous) };
+    unsafe { CallWindowProcW(original, hwnd, message, wparam, lparam) }
+}
+
+#[cfg(target_os = "windows")]
+fn show_native_taskbar_widget_menu(app: &AppHandle, hwnd: windows::Win32::Foundation::HWND) {
+    let Ok(menu) = (unsafe { CreatePopupMenu() }) else {
+        return;
     };
-
-    // Tauri implements cursor pass-through with WS_EX_TRANSPARENT. Clear a
-    // stale flag left by older widget versions before the shell hit-tests it.
-    restore_taskbar_widget_hit_testing(hwnd);
-
-    // SetParent intentionally leaves WS_POPUP/WS_CHILD unchanged. A top-level
-    // WebView hosted beneath Shell_TrayWnd can therefore occasionally expose a
-    // caption and shrink its client area into the taskbar. Convert the style
-    // first, then attach it as a real child window.
-    let original_style = apply_taskbar_child_window_style(hwnd);
-    if unsafe { GetAncestor(hwnd, GA_PARENT) } == taskbar {
-        return true;
+    let append_result = unsafe {
+        AppendMenuW(menu, MF_STRING, TASKBAR_MENU_OPEN, w!("Open TokenUsage"))
+            .and_then(|_| AppendMenuW(menu, MF_STRING, TASKBAR_MENU_REFRESH, w!("Refresh")))
+            .and_then(|_| AppendMenuW(menu, MF_STRING, TASKBAR_MENU_SETTINGS, w!("Settings")))
+            .and_then(|_| AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null()))
+            .and_then(|_| AppendMenuW(menu, MF_STRING, TASKBAR_MENU_QUIT, w!("Quit")))
+    };
+    if append_result.is_err() {
+        let _ = unsafe { DestroyMenu(menu) };
+        return;
     }
 
-    // SetParent may return a null previous parent even when the operation succeeds.
-    let _ = unsafe { SetParent(hwnd, Some(taskbar)) };
-    if (unsafe { GetAncestor(hwnd, GA_PARENT) }) == taskbar {
-        true
-    } else {
-        // A style conversion is only valid for a child window.  Restore the
-        // original top-level style so the independent-window fallback still works.
-        restore_top_level_window_style(hwnd, original_style);
-        false
+    let mut cursor = POINT::default();
+    if unsafe { GetCursorPos(&mut cursor) }.is_err() {
+        let _ = unsafe { DestroyMenu(menu) };
+        return;
     }
-}
+    let _ = unsafe { SetForegroundWindow(hwnd) };
+    let command = unsafe {
+        TrackPopupMenu(
+            menu,
+            TPM_LEFTALIGN | TPM_RETURNCMD | TPM_RIGHTBUTTON,
+            cursor.x,
+            cursor.y,
+            None,
+            hwnd,
+            None,
+        )
+        .0 as usize
+    };
+    let _ = unsafe { DestroyMenu(menu) };
 
-#[cfg(target_os = "windows")]
-fn position_taskbar_widget(app: &AppHandle, widget: &WebviewWindow, right_offset: u32) -> bool {
-    if attach_taskbar_widget(widget) {
-        return position_embedded_taskbar_widget(app, widget, right_offset);
+    match command {
+        TASKBAR_MENU_OPEN => show_main_window(app),
+        TASKBAR_MENU_SETTINGS => {
+            show_main_window(app);
+            let _ = app.emit("tokenusage://open-settings", ());
+        }
+        TASKBAR_MENU_REFRESH => {
+            show_main_window(app);
+            let _ = app.emit("tokenusage://refresh-requested", ());
+        }
+        TASKBAR_MENU_QUIT => app.exit(0),
+        _ => {}
     }
-
-    position_top_level_taskbar_window(app, widget, right_offset)
 }
 
 #[cfg(target_os = "windows")]
@@ -810,85 +823,12 @@ fn position_top_level_taskbar_window(
 
     window.set_size(PhysicalSize::new(width, height)).is_ok()
         && window.set_position(PhysicalPosition::new(x, y)).is_ok()
-}
-
-#[cfg(target_os = "windows")]
-fn position_embedded_taskbar_widget(
-    app: &AppHandle,
-    widget: &WebviewWindow,
-    right_offset: u32,
-) -> bool {
-    let (Ok(hwnd), Some(taskbar), Ok(Some(monitor))) =
-        (widget.hwnd(), taskbar_handle(), app.primary_monitor())
-    else {
-        return false;
-    };
-    let mut taskbar_rect = RECT::default();
-    if unsafe { GetWindowRect(taskbar, &mut taskbar_rect) }.is_err() {
-        return false;
-    }
-
-    let taskbar_width = taskbar_rect.right.saturating_sub(taskbar_rect.left);
-    let taskbar_height = taskbar_rect.bottom.saturating_sub(taskbar_rect.top);
-    if taskbar_width <= taskbar_height || taskbar_height <= 0 {
-        return false;
-    }
-
-    let scale_factor = monitor.scale_factor();
-    let margin = (TASKBAR_WIDGET_VERTICAL_MARGIN * scale_factor).round() as i32;
-    let width = (TASKBAR_WIDGET_WIDTH * scale_factor).round() as i32;
-    let height = taskbar_height.saturating_sub(margin.saturating_mul(2));
-    let offset = (right_offset as f64 * scale_factor).round() as i32;
-    let anchor_left = taskbar_anchor_screen_left(taskbar, taskbar_rect, scale_factor)
-        .saturating_sub(taskbar_rect.left);
-    let x = taskbar_widget_left(anchor_left, width, offset, 0);
-    if width <= 0 || height <= 0 {
-        return false;
-    }
-
-    unsafe {
-        SetWindowPos(
-            hwnd,
-            None,
-            x,
-            margin,
-            width,
-            height,
-            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW,
-        )
-    }
-    .is_ok()
+        && keep_taskbar_widget_above_taskbar(window)
 }
 
 #[cfg(all(test, target_os = "windows"))]
 mod taskbar_widget_tests {
     use super::*;
-
-    #[test]
-    fn embedded_widget_style_is_a_frameless_child_window() {
-        let top_level_style = (WS_POPUP.0
-            | WS_CAPTION.0
-            | WS_THICKFRAME.0
-            | WS_SYSMENU.0
-            | WS_MINIMIZEBOX.0
-            | WS_MAXIMIZEBOX.0) as isize;
-        let style = taskbar_child_window_style(top_level_style);
-
-        assert_ne!(style & WS_CHILD.0 as isize, 0);
-        assert_eq!(style & WS_POPUP.0 as isize, 0);
-        assert_eq!(style & WS_CAPTION.0 as isize, 0);
-        assert_eq!(style & WS_THICKFRAME.0 as isize, 0);
-        assert_eq!(style & WS_SYSMENU.0 as isize, 0);
-        assert_eq!(style & WS_MINIMIZEBOX.0 as isize, 0);
-        assert_eq!(style & WS_MAXIMIZEBOX.0 as isize, 0);
-    }
-
-    #[test]
-    fn embedded_widget_style_does_not_pass_pointer_events_through() {
-        let style = taskbar_widget_interactive_ex_style(WS_EX_TRANSPARENT.0 as isize);
-
-        assert_eq!(style & WS_EX_TRANSPARENT.0 as isize, 0);
-    }
 
     #[test]
     fn taskbar_widget_position_tracks_the_notification_anchor() {

@@ -7,5 +7,4 @@ export const api = {
     invoke<MultiRuntimeUsageSnapshot>("refresh_usage", { force }),
   saveSettings: (patch: Partial<AppSettings>) =>
     invoke<AppSettings>("save_settings", { patch }),
-  showTaskbarWidgetMenu: () => invoke<void>("show_taskbar_widget_menu"),
 };
