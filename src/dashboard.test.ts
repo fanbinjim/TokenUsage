@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { buildHalfYearMonthlyChartOption, buildHalfYearMonthlyUsage, buildHeatmapCalendar, buildSevenDayChartOption, dashboardQuotaPercent, safeThreadLabel, shortCwd, taskCardId, WOOL_MONTHLY_VALUE_CAP, woolProgressPercent } from "./App";
+import { buildHalfYearMonthlyChartOption, buildHalfYearMonthlyUsage, buildHeatmapCalendar, buildSevenDayChartOption, dashboardQuotaPercent, safeThreadLabel, SettingsModal, shortCwd, taskCardId, WOOL_MONTHLY_VALUE_CAP, woolProgressPercent } from "./App";
+import { MOCK_SETTINGS } from "./mockDashboard";
 import { currentMonthPlanWindow, findSevenDayQuotaWindow, quotaResetRemainingFraction, subscriptionPlanWindow } from "./quota";
 import type { DailyTokenBucket } from "./types";
 
@@ -180,6 +183,18 @@ describe("dashboard display and layout guards", () => {
     expect(findSevenDayQuotaWindow(fiveHour, null)).toBeNull();
     expect(quotaResetRemainingFraction({ ...sevenDay, resetsAt: "2026-07-17T13:00:00.000Z" }, Date.parse("2026-07-14T01:00:00.000Z"))).toBeCloseTo(0.5, 6);
     expect(quotaResetRemainingFraction({ ...sevenDay, resetsAt: null })).toBeNull();
+  });
+
+  it("shows a persisted autostart switch in settings", () => {
+    const markup = renderToStaticMarkup(
+      createElement(SettingsModal, {
+        settings: MOCK_SETTINGS,
+        onClose: () => undefined,
+        onUpdate: async () => undefined,
+      }),
+    );
+    expect(markup).toContain("开机自动启动");
+    expect(markup).toContain('type="checkbox"');
   });
 
   it("uses the saved subscription date for the outside ring cycle", () => {

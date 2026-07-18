@@ -11,6 +11,7 @@ use tokenusage_core::{
     APP_SETTINGS_SCHEMA_VERSION, AppSettings, DataPaths, MultiRuntimeUsageSnapshot, SettingsPatch,
     SettingsStore, load_multi_runtime,
 };
+use tauri_plugin_autostart::ManagerExt;
 
 #[cfg(target_os = "windows")]
 use windows::{
@@ -108,6 +109,18 @@ fn save_settings(
     state: State<'_, AppState>,
     patch: SettingsPatch,
 ) -> Result<AppSettings, String> {
+    if let Some(enabled) = patch.autostart_enabled {
+        let autostart = app.autolaunch();
+        if enabled {
+            autostart
+                .enable()
+                .map_err(|error| format!("无法启用开机自启动：{error}"))?;
+        } else {
+            autostart
+                .disable()
+                .map_err(|error| format!("无法关闭开机自启动：{error}"))?;
+        }
+    }
     let mut settings = state
         .settings
         .lock()
@@ -126,6 +139,23 @@ fn save_settings(
     sync_taskbar_widget(&app, &updated);
     let _ = app.emit("tokenusage://settings-updated", &updated);
     Ok(updated)
+}
+
+fn reconcile_autostart_setting(app: &tauri::App) {
+    let Ok(enabled) = app.autolaunch().is_enabled() else {
+        return;
+    };
+    let state = app.state::<AppState>();
+    let Ok(mut settings) = state.settings.lock() else {
+        return;
+    };
+    if settings.autostart_enabled == enabled {
+        return;
+    }
+    settings.autostart_enabled = enabled;
+    let updated = settings.clone();
+    drop(settings);
+    let _ = config_store(&updated).save(&updated);
 }
 
 #[tauri::command]
@@ -212,6 +242,10 @@ pub fn run() {
             snapshot: Mutex::new(None),
         })
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _, _cwd| {
@@ -235,6 +269,7 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            reconcile_autostart_setting(app);
             migrate_taskbar_anchor_settings(app);
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_decorations(false);

@@ -1803,6 +1803,18 @@ select, input {
   transition: background var(--ease-out);
 }
 
+.settings-toggle input[type="checkbox"]:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.settings-error {
+  margin-top: calc(var(--space-sm) * -1);
+  color: var(--status-danger);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 .settings-toggle input[type="checkbox"]::after {
   content: "";
   position: absolute;

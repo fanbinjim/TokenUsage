@@ -82,6 +82,7 @@ export const MOCK_SETTINGS: AppSettings = {
   quickPanelDensity: "detailed",
   keepRunningWhenMainWindowClosed: true,
   keepMainWindowOnTop: false,
+  autostartEnabled: false,
   taskbarWidgetEnabled: true,
   taskbarWidgetRightOffset: 1050,
   automaticUpdateChecksEnabled: true,

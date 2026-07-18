@@ -22,6 +22,7 @@ pub struct AppSettings {
     pub quick_panel_density: String,
     pub keep_running_when_main_window_closed: bool,
     pub keep_main_window_on_top: bool,
+    pub autostart_enabled: bool,
     pub taskbar_widget_enabled: bool,
     pub taskbar_widget_right_offset: u32,
     pub automatic_update_checks_enabled: bool,
@@ -44,6 +45,7 @@ impl Default for AppSettings {
             quick_panel_density: "compact".into(),
             keep_running_when_main_window_closed: true,
             keep_main_window_on_top: false,
+            autostart_enabled: false,
             taskbar_widget_enabled: true,
             taskbar_widget_right_offset: 0,
             automatic_update_checks_enabled: true,
@@ -67,6 +69,7 @@ pub struct SettingsPatch {
     pub quick_panel_density: Option<String>,
     pub keep_running_when_main_window_closed: Option<bool>,
     pub keep_main_window_on_top: Option<bool>,
+    pub autostart_enabled: Option<bool>,
     pub taskbar_widget_enabled: Option<bool>,
     pub taskbar_widget_right_offset: Option<u32>,
     pub automatic_update_checks_enabled: Option<bool>,
@@ -110,6 +113,9 @@ impl AppSettings {
         }
         if let Some(value) = patch.keep_main_window_on_top {
             self.keep_main_window_on_top = value;
+        }
+        if let Some(value) = patch.autostart_enabled {
+            self.autostart_enabled = value;
         }
         if let Some(value) = patch.taskbar_widget_enabled {
             self.taskbar_widget_enabled = value;
@@ -235,5 +241,20 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(settings.subscription_started_on, None);
+    }
+
+    #[test]
+    fn autostart_setting_can_be_enabled_and_disabled() {
+        let mut settings = AppSettings::default();
+        settings.apply_patch(SettingsPatch {
+            autostart_enabled: Some(true),
+            ..Default::default()
+        });
+        assert!(settings.autostart_enabled);
+        settings.apply_patch(SettingsPatch {
+            autostart_enabled: Some(false),
+            ..Default::default()
+        });
+        assert!(!settings.autostart_enabled);
     }
 }

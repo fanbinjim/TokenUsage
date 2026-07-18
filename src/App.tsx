@@ -1195,13 +1195,28 @@ function SkillsTab({ skills, tools }: { skills: NamedUsage[]; tools: NamedUsage[
    Settings Modal
    ======================================================== */
 
-function SettingsModal({
+export function SettingsModal({
   settings, onClose, onUpdate,
 }: {
   settings: AppSettings;
   onClose: () => void;
-  onUpdate: (patch: Partial<AppSettings>) => void;
+  onUpdate: (patch: Partial<AppSettings>) => Promise<void>;
 }) {
+  const [autostartBusy, setAutostartBusy] = useState(false);
+  const [autostartError, setAutostartError] = useState<string | null>(null);
+
+  const handleAutostartChange = async (enabled: boolean) => {
+    setAutostartBusy(true);
+    setAutostartError(null);
+    try {
+      await onUpdate({ autostartEnabled: enabled });
+    } catch (error) {
+      setAutostartError(String(error).replace(/^Error:\s*/, ""));
+    } finally {
+      setAutostartBusy(false);
+    }
+  };
+
   return (
     <div className="settings-overlay" onClick={onClose}>
       <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
@@ -1255,6 +1270,16 @@ function SettingsModal({
             <span>主窗口置顶</span>
             <input type="checkbox" checked={settings.keepMainWindowOnTop} onChange={(e) => onUpdate({ keepMainWindowOnTop: e.target.checked })} />
           </div>
+          <div className="settings-toggle settings-toggle-with-status">
+            <span>开机自动启动</span>
+            <input
+              type="checkbox"
+              checked={settings.autostartEnabled}
+              disabled={autostartBusy}
+              onChange={(e) => void handleAutostartChange(e.target.checked)}
+            />
+          </div>
+          {autostartError && <span className="settings-error">{autostartError}</span>}
           <div className="settings-toggle">
             <span>任务栏常驻用量条</span>
             <input type="checkbox" checked={settings.taskbarWidgetEnabled} onChange={(e) => onUpdate({ taskbarWidgetEnabled: e.target.checked })} />
@@ -1373,12 +1398,12 @@ export default function App({ mockMode = false }: { mockMode?: boolean }) {
     void refresh();
   }, [mockMode, refresh]);
   const handleUpdateSettings = useCallback(
-    (patch: Partial<AppSettings>) => {
+    async (patch: Partial<AppSettings>) => {
       if (mockMode) {
         setMockSettings((current) => ({ ...current, ...patch }));
         return;
       }
-      void updateSettings(patch);
+      await updateSettings(patch);
     },
     [mockMode, updateSettings],
   );
