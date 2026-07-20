@@ -53,6 +53,12 @@ const TASKBAR_WIDGET_WIDTH: f64 = 184.0;
 const TASKBAR_WIDGET_VERTICAL_MARGIN: f64 = 3.0;
 const TASKBAR_NOTIFICATION_FALLBACK_WIDTH: f64 = 320.0;
 const USAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
+const TRANSIENT_REMOTE_FAILURE_CODES: &[&str] = &[
+    "app_server_request_failed",
+    "app_server_initialize_timeout",
+    "app_server_partial_timeout",
+    "app_server_unavailable",
+];
 // The taskbar visual widget and input layer are kept separate deliberately.
 
 #[cfg(target_os = "windows")]
@@ -106,7 +112,7 @@ async fn bootstrap(app: AppHandle, state: State<'_, AppState>) -> Result<Bootstr
     })
     .await
     .map_err(|_| "Usage refresh task failed.")?;
-    store_and_publish_snapshot(&app, &state, snapshot.clone())?;
+    let snapshot = store_and_publish_snapshot(&app, &state, snapshot)?;
     Ok(BootstrapPayload { settings, snapshot })
 }
 
@@ -124,8 +130,7 @@ async fn refresh_usage(
     let snapshot = tauri::async_runtime::spawn_blocking(move || load_usage(&settings))
         .await
         .map_err(|_| "Usage refresh task failed.")?;
-    store_and_publish_snapshot(&app, &state, snapshot.clone())?;
-    Ok(snapshot)
+    store_and_publish_snapshot(&app, &state, snapshot)
 }
 
 #[tauri::command]
@@ -187,13 +192,92 @@ fn store_and_publish_snapshot(
     app: &AppHandle,
     state: &AppState,
     snapshot: MultiRuntimeUsageSnapshot,
-) -> Result<(), String> {
-    *state
+) -> Result<MultiRuntimeUsageSnapshot, String> {
+    let mut cached_snapshot = state
         .snapshot
         .lock()
-        .map_err(|_| "Usage snapshot is unavailable.")? = Some(snapshot.clone());
-    let _ = app.emit("tokenusage://snapshot", snapshot);
-    Ok(())
+        .map_err(|_| "Usage snapshot is unavailable.")?;
+
+    if should_keep_cached_snapshot(cached_snapshot.as_ref(), &snapshot) {
+        return cached_snapshot
+            .clone()
+            .ok_or_else(|| "Usage snapshot is unavailable.".to_owned());
+    }
+
+    *cached_snapshot = Some(snapshot.clone());
+    drop(cached_snapshot);
+    let _ = app.emit("tokenusage://snapshot", snapshot.clone());
+    Ok(snapshot)
+}
+
+fn should_keep_cached_snapshot(
+    cached: Option<&MultiRuntimeUsageSnapshot>,
+    candidate: &MultiRuntimeUsageSnapshot,
+) -> bool {
+    cached.is_some_and(has_quota_data)
+        && !has_quota_data(candidate)
+        && candidate.runtimes.iter().any(|runtime| {
+            runtime.snapshot.diagnostics.iter().any(|diagnostic| {
+                TRANSIENT_REMOTE_FAILURE_CODES.contains(&diagnostic.code.as_str())
+            })
+        })
+}
+
+fn has_quota_data(snapshot: &MultiRuntimeUsageSnapshot) -> bool {
+    snapshot.runtimes.iter().any(|runtime| {
+        runtime.snapshot.primary.is_some() || runtime.snapshot.secondary.is_some()
+    })
+}
+
+#[cfg(test)]
+mod refresh_snapshot_tests {
+    use super::*;
+    use tokenusage_core::{
+        DiagnosticItem, RateWindow, RuntimeScope, RuntimeStatus, RuntimeUsageSnapshot,
+        SNAPSHOT_SCHEMA_VERSION, UsageSnapshot,
+    };
+
+    fn snapshot(has_quota_data: bool, diagnostic_codes: &[&str]) -> MultiRuntimeUsageSnapshot {
+        let mut usage = UsageSnapshot::empty();
+        if has_quota_data {
+            usage.primary = Some(RateWindow::new(20.0, Some(10_080), None));
+        }
+        usage.diagnostics = diagnostic_codes
+            .iter()
+            .map(|code| DiagnosticItem::warning(*code, "test diagnostic"))
+            .collect();
+        let refreshed_at = usage.refreshed_at;
+        MultiRuntimeUsageSnapshot {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            refreshed_at,
+            runtimes: vec![RuntimeUsageSnapshot {
+                scope: RuntimeScope::Codex,
+                display_name: "Codex".to_owned(),
+                status: if has_quota_data {
+                    RuntimeStatus::Available
+                } else {
+                    RuntimeStatus::LocalOnly
+                },
+                snapshot: usage,
+            }],
+        }
+    }
+
+    #[test]
+    fn failed_remote_refresh_keeps_the_last_valid_quota_snapshot() {
+        let cached = snapshot(true, &[]);
+        let failed = snapshot(false, &["app_server_partial_timeout"]);
+
+        assert!(should_keep_cached_snapshot(Some(&cached), &failed));
+    }
+
+    #[test]
+    fn refresh_with_quota_data_replaces_the_cached_snapshot() {
+        let cached = snapshot(true, &[]);
+        let refreshed = snapshot(true, &["app_server_request_failed"]);
+
+        assert!(!should_keep_cached_snapshot(Some(&cached), &refreshed));
+    }
 }
 
 fn sync_main_window_appearance(window: &WebviewWindow, theme: &str) {
