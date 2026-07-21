@@ -24,7 +24,6 @@ document.documentElement.dataset.platform = /Windows/i.test(navigator.userAgent)
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     {currentWindowLabel === "taskbar-widget" || isTaskbarPreview ? <TaskbarWidget preview={taskbarPreview} />
-      : currentWindowLabel === "taskbar-input-proxy" ? null
       : <App mockMode={isMainMockPreview} />}
   </StrictMode>,
 );

@@ -1,9 +1,14 @@
+use std::{sync::Mutex, time::Duration};
+
+#[cfg(target_os = "windows")]
 use std::{
+    fs::OpenOptions,
+    io::Write,
     sync::{
-        Mutex, OnceLock,
+        OnceLock,
         atomic::{AtomicIsize, Ordering},
     },
-    time::Duration,
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -28,14 +33,13 @@ use windows::{
             DwmSetWindowAttribute,
         },
         UI::{
-            Input::KeyboardAndMouse::EnableWindow,
             WindowsAndMessaging::{
-                AppendMenuW, CallWindowProcW, CreatePopupMenu, DefWindowProcW, DestroyMenu,
-                FindWindowExW, FindWindowW, GW_OWNER, GWLP_HWNDPARENT, GWLP_WNDPROC, GetCursorPos,
-                GetWindow, GetWindowRect, HWND_TOPMOST, MF_SEPARATOR, MF_STRING, SWP_NOACTIVATE,
+                AppendMenuW, CallNextHookEx, CreatePopupMenu, DestroyMenu, FindWindowExW,
+                FindWindowW, GW_OWNER, GWLP_HWNDPARENT, GetCursorPos, GetWindow, GetWindowRect,
+                HWND_TOPMOST, MF_SEPARATOR, MF_STRING, MSLLHOOKSTRUCT, SWP_NOACTIVATE,
                 SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SetForegroundWindow, SetWindowLongPtrW,
-                SetWindowPos, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
-                WM_RBUTTONUP, WNDPROC,
+                SetWindowPos, SetWindowsHookExW, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+                TrackPopupMenu, WH_MOUSE_LL, WM_RBUTTONUP,
             },
         },
     },
@@ -45,21 +49,25 @@ use windows::{
 struct AppState {
     settings: Mutex<AppSettings>,
     snapshot: Mutex<Option<MultiRuntimeUsageSnapshot>>,
+    #[cfg(target_os = "windows")]
+    taskbar_widget_next_recreate_at: Mutex<Option<Instant>>,
 }
 
 const TASKBAR_WIDGET_LABEL: &str = "taskbar-widget";
-const TASKBAR_INPUT_PROXY_LABEL: &str = "taskbar-input-proxy";
 const TASKBAR_WIDGET_WIDTH: f64 = 184.0;
 const TASKBAR_WIDGET_VERTICAL_MARGIN: f64 = 3.0;
 const TASKBAR_NOTIFICATION_FALLBACK_WIDTH: f64 = 320.0;
 const USAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
+#[cfg(target_os = "windows")]
+const TASKBAR_WIDGET_RECREATE_DELAY: Duration = Duration::from_secs(5);
 const TRANSIENT_REMOTE_FAILURE_CODES: &[&str] = &[
     "app_server_request_failed",
     "app_server_initialize_timeout",
     "app_server_partial_timeout",
     "app_server_unavailable",
 ];
-// The taskbar visual widget and input layer are kept separate deliberately.
+// The taskbar widget is a single transparent WebView window. Explorer can rebuild
+// Shell_TrayWnd, so its lifecycle is recovered independently from the main UI.
 
 #[cfg(target_os = "windows")]
 const TASKBAR_MENU_OPEN: usize = 1;
@@ -71,9 +79,9 @@ const TASKBAR_MENU_SETTINGS: usize = 3;
 const TASKBAR_MENU_QUIT: usize = 4;
 
 #[cfg(target_os = "windows")]
-static TASKBAR_INPUT_PROXY_APP: OnceLock<AppHandle> = OnceLock::new();
+static TASKBAR_WIDGET_APP: OnceLock<AppHandle> = OnceLock::new();
 #[cfg(target_os = "windows")]
-static TASKBAR_INPUT_PROXY_ORIGINAL_WNDPROC: AtomicIsize = AtomicIsize::new(0);
+static TASKBAR_WIDGET_MOUSE_HOOK: AtomicIsize = AtomicIsize::new(0);
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -325,6 +333,8 @@ pub fn run() {
         .manage(AppState {
             settings: Mutex::new(initial_settings),
             snapshot: Mutex::new(None),
+            #[cfg(target_os = "windows")]
+            taskbar_widget_next_recreate_at: Mutex::new(None),
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
@@ -341,6 +351,9 @@ pub fn run() {
         }))
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() != "main" {
+                    return;
+                }
                 let keep_running = window
                     .state::<AppState>()
                     .settings
@@ -368,8 +381,8 @@ pub fn run() {
                 let _ = window.show();
                 let _ = window.set_focus();
             }
-            create_taskbar_widget(app)?;
-            create_taskbar_input_proxy(app)?;
+            create_taskbar_widget(&app.handle())?;
+            install_taskbar_widget_mouse_hook(&app.handle());
             start_usage_refresh_loop(app.handle().clone());
             start_taskbar_position_loop(app.handle().clone());
             let open = MenuItem::with_id(app, "open", "Open TokenUsage", true, None::<&str>)?;
@@ -486,12 +499,25 @@ fn start_taskbar_position_loop(app: AppHandle) {
                 continue;
             };
             let current = current_taskbar_layout_signature(&settings);
-            if current != previous {
+            let needs_widget_recovery = taskbar_widget_needs_recovery(
+                settings.taskbar_widget_enabled,
+                app.get_webview_window(TASKBAR_WIDGET_LABEL)
+                    .and_then(|widget| widget.is_visible().ok()),
+            );
+            if current != previous || needs_widget_recovery {
                 sync_taskbar_widget(&app, &settings);
-                previous = current;
             }
+            previous = current;
         }
     });
+}
+
+#[cfg(target_os = "windows")]
+fn taskbar_widget_needs_recovery(
+    enabled: bool,
+    widget_visible: Option<bool>,
+) -> bool {
+    enabled && widget_visible != Some(true)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -555,10 +581,11 @@ fn migrate_taskbar_anchor_settings(app: &tauri::App) {
 }
 
 #[cfg(target_os = "windows")]
-fn create_taskbar_widget(app: &tauri::App) -> tauri::Result<()> {
-    if app.get_webview_window(TASKBAR_WIDGET_LABEL).is_some() {
-        return Ok(());
+fn create_taskbar_widget(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    if let Some(widget) = app.get_webview_window(TASKBAR_WIDGET_LABEL) {
+        return Ok(widget);
     }
+
     let widget = WebviewWindowBuilder::new(
         app,
         TASKBAR_WIDGET_LABEL,
@@ -589,80 +616,64 @@ fn create_taskbar_widget(app: &tauri::App) -> tauri::Result<()> {
     })
     .build()?;
     let _ = widget.set_background_color(Some(Color(0, 0, 0, 0)));
-    Ok(())
+    Ok(widget)
 }
 
 #[cfg(target_os = "windows")]
-fn create_taskbar_input_proxy(app: &tauri::App) -> tauri::Result<()> {
-    if app.get_webview_window(TASKBAR_INPUT_PROXY_LABEL).is_some() {
-        return Ok(());
+fn ensure_taskbar_widget(app: &AppHandle) -> Option<WebviewWindow> {
+    if let Some(widget) = app.get_webview_window(TASKBAR_WIDGET_LABEL) {
+        return Some(widget);
     }
-    let proxy = WebviewWindowBuilder::new(
-        app,
-        TASKBAR_INPUT_PROXY_LABEL,
-        WebviewUrl::App("index.html".into()),
-    )
-    .title("TokenUsage Taskbar Input Layer")
-    .inner_size(TASKBAR_WIDGET_WIDTH, 34.0)
-    .resizable(false)
-    .decorations(false)
-    .transparent(true)
-    .background_color(Color(0, 0, 0, 0))
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .focusable(true)
-    .shadow(false)
-    .visible(false)
-    .on_page_load(|proxy, payload| {
-        if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
-            let app = proxy.app_handle();
-            let settings = app
-                .state::<AppState>()
-                .settings
-                .lock()
-                .map(|settings| settings.clone())
-                .unwrap_or_default();
-            sync_taskbar_widget(app, &settings);
-            if let Some(proxy) = app.get_webview_window(TASKBAR_INPUT_PROXY_LABEL) {
-                install_taskbar_input_proxy_hook(&proxy);
+
+    let state = app.state::<AppState>();
+    let Ok(mut next_recreate_at) = state.taskbar_widget_next_recreate_at.lock() else {
+        record_taskbar_widget_event(app, "任务栏窗口重建状态不可用。");
+        return None;
+    };
+    let now = Instant::now();
+    if next_recreate_at.is_some_and(|retry_at| retry_at > now) {
+        return None;
+    }
+    *next_recreate_at = Some(now + TASKBAR_WIDGET_RECREATE_DELAY);
+    drop(next_recreate_at);
+
+    match create_taskbar_widget(app) {
+        Ok(widget) => {
+            if let Ok(mut next_recreate_at) = state.taskbar_widget_next_recreate_at.lock() {
+                *next_recreate_at = None;
             }
+            record_taskbar_widget_event(app, "任务栏窗口已创建或已恢复。");
+            Some(widget)
         }
-    })
-    .build()?;
-    let _ = proxy.set_background_color(Some(Color(0, 0, 0, 0)));
-    let _ = TASKBAR_INPUT_PROXY_APP.set(app.handle().clone());
-    Ok(())
+        Err(error) => {
+            record_taskbar_widget_event(app, &format!("任务栏窗口创建失败：{error}"));
+            None
+        }
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
-fn create_taskbar_widget(_app: &tauri::App) -> tauri::Result<()> {
-    Ok(())
-}
-
-#[cfg(not(target_os = "windows"))]
-fn create_taskbar_input_proxy(_app: &tauri::App) -> tauri::Result<()> {
-    Ok(())
-}
+fn ensure_taskbar_widget(_app: &AppHandle) -> Option<WebviewWindow> { None }
 
 #[cfg(target_os = "windows")]
 fn sync_taskbar_widget(app: &AppHandle, settings: &AppSettings) {
-    if let Some(widget) = app.get_webview_window(TASKBAR_WIDGET_LABEL) {
-        if !settings.taskbar_widget_enabled {
-            let _ = widget.hide();
-        } else if !position_taskbar_widget(app, &widget, settings.taskbar_widget_right_offset) {
+    if !settings.taskbar_widget_enabled {
+        if let Some(widget) = app.get_webview_window(TASKBAR_WIDGET_LABEL) {
             let _ = widget.hide();
         }
+        return;
     }
-    if let Some(proxy) = app.get_webview_window(TASKBAR_INPUT_PROXY_LABEL) {
-        if !settings.taskbar_widget_enabled {
-            let _ = proxy.hide();
-        } else if !position_top_level_taskbar_window(
-            app,
-            &proxy,
-            settings.taskbar_widget_right_offset,
-        ) {
-            let _ = proxy.hide();
-        }
+
+    let Some(widget) = ensure_taskbar_widget(app) else {
+        return;
+    };
+    if let Err(error) = position_top_level_taskbar_window(
+        app,
+        &widget,
+        settings.taskbar_widget_right_offset,
+    ) {
+        record_taskbar_widget_event(app, &format!("任务栏窗口定位失败：{error}"));
+        let _ = widget.hide();
     }
 }
 
@@ -707,10 +718,11 @@ fn taskbar_widget_left(anchor_left: i32, width: i32, manual_offset: i32, minimum
 }
 
 #[cfg(target_os = "windows")]
-fn keep_taskbar_widget_above_taskbar(widget: &WebviewWindow) -> bool {
-    let (Ok(hwnd), Some(taskbar)) = (widget.hwnd(), taskbar_handle()) else {
-        return false;
-    };
+fn keep_taskbar_widget_above_taskbar(widget: &WebviewWindow) -> Result<(), String> {
+    let hwnd = widget
+        .hwnd()
+        .map_err(|error| format!("无法获取任务栏窗口句柄：{error}"))?;
+    let taskbar = taskbar_handle().ok_or("未找到 Shell_TrayWnd。")?;
 
     // Explorer does not reliably accept a foreign WebView as a child window.
     // Keep the widget as an owned, top-level overlay instead: it stays above
@@ -720,7 +732,7 @@ fn keep_taskbar_widget_above_taskbar(widget: &WebviewWindow) -> bool {
         unsafe { SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, taskbar.0 as isize) };
     }
     if unsafe { GetWindow(hwnd, GW_OWNER) }.ok() != Some(taskbar) {
-        return false;
+        return Err("无法将任务栏窗口绑定到当前 Shell_TrayWnd。".into());
     }
 
     unsafe {
@@ -734,64 +746,85 @@ fn keep_taskbar_widget_above_taskbar(widget: &WebviewWindow) -> bool {
             SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
         )
     }
-    .is_ok()
+    .map_err(|error| format!("无法将任务栏窗口置于任务栏上方：{error}"))?;
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
-fn position_taskbar_widget(app: &AppHandle, widget: &WebviewWindow, right_offset: u32) -> bool {
-    position_top_level_taskbar_window(app, widget, right_offset)
-}
-
-#[cfg(target_os = "windows")]
-fn install_taskbar_input_proxy_hook(proxy: &WebviewWindow) {
-    let Ok(hwnd) = proxy.hwnd() else {
-        return;
-    };
-
-    // WebView2 renders its child surface in a separate process. Disabling the
-    // transparent child lets the app-owned proxy window receive mouse input
-    // while the visible widget below it remains fully unobscured.
-    if let Ok(webview) =
-        unsafe { FindWindowExW(Some(hwnd), None, w!("WRY_WEBVIEW"), PCWSTR::null()) }
-    {
-        let _ = unsafe { EnableWindow(webview, false) };
-    }
-
-    if TASKBAR_INPUT_PROXY_ORIGINAL_WNDPROC.load(Ordering::Acquire) != 0 {
+fn install_taskbar_widget_mouse_hook(app: &AppHandle) {
+    let _ = TASKBAR_WIDGET_APP.set(app.clone());
+    if TASKBAR_WIDGET_MOUSE_HOOK.load(Ordering::Acquire) != 0 {
         return;
     }
-    let previous = unsafe {
-        SetWindowLongPtrW(
-            hwnd,
-            GWLP_WNDPROC,
-            taskbar_input_proxy_wnd_proc as *const () as usize as isize,
-        )
-    };
-    if previous != 0 {
-        TASKBAR_INPUT_PROXY_ORIGINAL_WNDPROC.store(previous, Ordering::Release);
+
+    match unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(taskbar_widget_mouse_hook_proc), None, 0) } {
+        Ok(hook) => {
+            TASKBAR_WIDGET_MOUSE_HOOK.store(hook.0 as isize, Ordering::Release);
+            record_taskbar_widget_event(app, "任务栏右键监听已启用。");
+        }
+        Err(error) => record_taskbar_widget_event(app, &format!("任务栏右键监听启动失败：{error}")),
     }
 }
 
 #[cfg(target_os = "windows")]
-unsafe extern "system" fn taskbar_input_proxy_wnd_proc(
-    hwnd: windows::Win32::Foundation::HWND,
-    message: u32,
+fn taskbar_widget_at_point(app: &AppHandle, point: POINT) -> Option<windows::Win32::Foundation::HWND> {
+    let widget = app.get_webview_window(TASKBAR_WIDGET_LABEL)?;
+    let hwnd = widget.hwnd().ok()?;
+    let rect = window_rect(hwnd)?;
+    (point.x >= rect.left && point.x < rect.right && point.y >= rect.top && point.y < rect.bottom)
+        .then_some(hwnd)
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn taskbar_widget_mouse_hook_proc(
+    code: i32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    if message == WM_RBUTTONUP {
-        if let Some(app) = TASKBAR_INPUT_PROXY_APP.get() {
-            show_native_taskbar_widget_menu(app, hwnd);
+    if code >= 0 && wparam.0 as u32 == WM_RBUTTONUP {
+        let info = unsafe { (lparam.0 as *const MSLLHOOKSTRUCT).as_ref() };
+        if let (Some(info), Some(app)) = (info, TASKBAR_WIDGET_APP.get()) {
+            if taskbar_widget_at_point(app, info.pt).is_some() {
+                let app_for_menu = app.clone();
+                let point = info.pt;
+                let _ = app.run_on_main_thread(move || {
+                    if let Some(hwnd) = taskbar_widget_at_point(&app_for_menu, point) {
+                        show_native_taskbar_widget_menu(&app_for_menu, hwnd);
+                    }
+                });
+                return LRESULT(1);
+            }
         }
-        return LRESULT(0);
     }
 
-    let previous = TASKBAR_INPUT_PROXY_ORIGINAL_WNDPROC.load(Ordering::Acquire);
-    if previous == 0 {
-        return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
+    unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+#[cfg(target_os = "windows")]
+fn record_taskbar_widget_event(app: &AppHandle, message: &str) {
+    eprintln!("[taskbar-widget] {message}");
+    let settings = app
+        .state::<AppState>()
+        .settings
+        .lock()
+        .map(|settings| settings.clone())
+        .unwrap_or_default();
+    let path = DataPaths::live(&settings)
+        .app_config_directory
+        .join("taskbar-widget.log");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
     }
-    let original: WNDPROC = unsafe { std::mem::transmute(previous) };
-    unsafe { CallWindowProcW(original, hwnd, message, wparam, lparam) }
+    if !path.exists() {
+        let _ = std::fs::write(&path, [0xEF, 0xBB, 0xBF]);
+    }
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "[{timestamp}] {message}");
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -851,17 +884,19 @@ fn position_top_level_taskbar_window(
     app: &AppHandle,
     window: &WebviewWindow,
     right_offset: u32,
-) -> bool {
-    let _ = window.show();
-    let Ok(Some(monitor)) = app.primary_monitor() else {
-        return false;
-    };
+) -> Result<(), String> {
+    window
+        .show()
+        .map_err(|error| format!("无法显示任务栏窗口：{error}"))?;
+    let monitor = app
+        .primary_monitor()
+        .map_err(|error| format!("无法读取主显示器：{error}"))?
+        .ok_or("未找到主显示器。")?;
     let monitor_position = monitor.position();
     let monitor_size = monitor.size();
     let work_area = monitor.work_area();
     let screen_left = monitor_position.x;
     let screen_top = monitor_position.y;
-    let screen_right = screen_left.saturating_add(monitor_size.width as i32);
     let screen_bottom = screen_top.saturating_add(monitor_size.height as i32);
     let work_top = work_area.position.y;
     let work_bottom = work_top.saturating_add(work_area.size.height as i32);
@@ -874,7 +909,7 @@ fn position_top_level_taskbar_window(
         None
     };
     let Some(taskbar_top) = taskbar_top else {
-        return false;
+        return Err("当前仅支持位于屏幕顶部或底部的任务栏。".into());
     };
     let taskbar_bottom = if taskbar_top == screen_top {
         work_top
@@ -883,7 +918,7 @@ fn position_top_level_taskbar_window(
     };
     let taskbar_height = taskbar_bottom.saturating_sub(taskbar_top);
     if taskbar_height <= 0 {
-        return false;
+        return Err("任务栏高度无效。".into());
     }
 
     let scale_factor = monitor.scale_factor();
@@ -891,23 +926,23 @@ fn position_top_level_taskbar_window(
     let width = (TASKBAR_WIDGET_WIDTH * scale_factor).round() as u32;
     let height = taskbar_height.saturating_sub(margin.saturating_mul(2)) as u32;
     if height == 0 {
-        return false;
+        return Err("任务栏可用高度无效。".into());
     }
     let offset = (right_offset as f64 * scale_factor).round() as i32;
-    let anchor_left = taskbar_handle()
+    let (taskbar, taskbar_rect) = taskbar_handle()
         .and_then(|taskbar| window_rect(taskbar).map(|rect| (taskbar, rect)))
-        .map(|(taskbar, rect)| taskbar_anchor_screen_left(taskbar, rect, scale_factor))
-        .unwrap_or_else(|| {
-            let fallback_width =
-                (TASKBAR_NOTIFICATION_FALLBACK_WIDTH * scale_factor).round() as i32;
-            screen_right.saturating_sub(fallback_width)
-        });
+        .ok_or("未找到可用的 Shell_TrayWnd。")?;
+    let anchor_left = taskbar_anchor_screen_left(taskbar, taskbar_rect, scale_factor);
     let x = taskbar_widget_left(anchor_left, width as i32, offset, screen_left);
     let y = taskbar_top.saturating_add(margin);
 
-    window.set_size(PhysicalSize::new(width, height)).is_ok()
-        && window.set_position(PhysicalPosition::new(x, y)).is_ok()
-        && keep_taskbar_widget_above_taskbar(window)
+    window
+        .set_size(PhysicalSize::new(width, height))
+        .map_err(|error| format!("无法设置任务栏窗口尺寸：{error}"))?;
+    window
+        .set_position(PhysicalPosition::new(x, y))
+        .map_err(|error| format!("无法设置任务栏窗口位置：{error}"))?;
+    keep_taskbar_widget_above_taskbar(window)
 }
 
 #[cfg(all(test, target_os = "windows"))]
@@ -929,6 +964,14 @@ mod taskbar_widget_tests {
         assert_eq!(anchored_offset_from_legacy(848, 566, 1.0), 282);
         assert_eq!(anchored_offset_from_legacy(848, 849, 1.5), 282);
         assert_eq!(anchored_offset_from_legacy(200, 566, 1.0), 0);
+    }
+
+    #[test]
+    fn taskbar_widget_recovery_requires_an_enabled_missing_or_hidden_window() {
+        assert!(taskbar_widget_needs_recovery(true, None));
+        assert!(taskbar_widget_needs_recovery(true, Some(false)));
+        assert!(!taskbar_widget_needs_recovery(true, Some(true)));
+        assert!(!taskbar_widget_needs_recovery(false, None));
     }
 }
 

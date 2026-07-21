@@ -184,7 +184,6 @@ export default function TaskbarWidget({ preview }: { preview?: TaskbarWidgetPrev
     <div
       className="taskbar-widget"
       aria-label="TokenUsage live quota"
-      onContextMenu={(event) => event.preventDefault()}
     >
       <div className="taskbar-widget-quotas">
         <QuotaRow label="7d" percent={quota.sevenDay} tone="secondary" />
